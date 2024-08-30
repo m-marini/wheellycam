@@ -33,7 +33,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
-import org.mmarini.Tuple2;
 import org.opencv.core.Mat;
 
 import java.io.IOException;
@@ -46,16 +45,16 @@ class CameraControllerTest {
     private CameraController cameraController;
 
     @Test
-    void captureQrcodeTest() throws InterruptedException, IOException {
+    void captureQrcodeTest() throws IOException {
         // Given ...
 
         // When ...
-        Tuple2<String, Mat> qrcode = cameraController.captureQrCode();
+        CameraController.CameraEvent qrcode = cameraController.captureQrCode();
 
         // Then ...
         assertNotNull(qrcode);
-        assertEquals("A", qrcode._1);
-        assertThat(qrcode._2.dump(), matchesPattern("\\[.*\\]"));
+        assertEquals("A", qrcode.qrcode());
+        assertThat(qrcode.points().dump(), matchesPattern("\\[.*]"));
     }
 
     @Test
@@ -105,7 +104,7 @@ class CameraControllerTest {
     }
 
     @Test
-    void syncTest() throws InterruptedException {
+    void syncTest() {
         // Given ...
 
         // When ...

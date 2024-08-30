@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+### Added
+
+- Issue [#3](https://github.com/m-marini/wheellycam/issues/3): Add timestamp to event lines
+
 ### Changed
 
-- Issue #1: Fixed pom package
+- Issue [#1](https://github.com/m-marini/wheellycam/issues/1): Fixed pom package
