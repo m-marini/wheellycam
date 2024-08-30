@@ -36,11 +36,9 @@ import net.sourceforge.argparse4j.impl.Arguments;
 import net.sourceforge.argparse4j.inf.ArgumentParser;
 import net.sourceforge.argparse4j.inf.ArgumentParserException;
 import net.sourceforge.argparse4j.inf.Namespace;
-import org.mmarini.Tuple2;
 import org.mmarini.wheellycam.apis.CameraController;
 import org.mmarini.yaml.Locator;
 import org.opencv.core.Core;
-import org.opencv.core.Mat;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -136,19 +134,20 @@ public class QRCode {
      *
      * @param qrCode the qrcode result
      */
-    private static String qrCode2String(Tuple2<String, Mat> qrCode) {
-        return qrCode._1.isEmpty()
-                ? "? 0 0 0 0 0 0 0 0"
-                : format(Locale.ENGLISH, "%s %.1f %.1f %.1f %.1f %.1f %.1f %.1f %.1f",
-                qrCode._1,
-                qrCode._2.get(0, 0)[0],
-                qrCode._2.get(0, 0)[1],
-                qrCode._2.get(0, 1)[0],
-                qrCode._2.get(0, 1)[1],
-                qrCode._2.get(0, 2)[0],
-                qrCode._2.get(0, 2)[1],
-                qrCode._2.get(0, 3)[0],
-                qrCode._2.get(0, 3)[1]);
+    private static String qrCode2String(CameraController.CameraEvent qrCode) {
+        return qrCode.qrcode().isEmpty()
+                ? format(Locale.ENGLISH, "%d ? 0 0 0 0 0 0 0 0", qrCode.timestamp())
+                : format(Locale.ENGLISH, "%d %s %.1f %.1f %.1f %.1f %.1f %.1f %.1f %.1f",
+                qrCode.timestamp(),
+                qrCode.qrcode(),
+                qrCode.points().get(0, 0)[0],
+                qrCode.points().get(0, 0)[1],
+                qrCode.points().get(0, 1)[0],
+                qrCode.points().get(0, 1)[1],
+                qrCode.points().get(0, 2)[0],
+                qrCode.points().get(0, 2)[1],
+                qrCode.points().get(0, 3)[0],
+                qrCode.points().get(0, 3)[1]);
     }
 
     private final Namespace args;
@@ -191,7 +190,7 @@ public class QRCode {
             if (synchro) {
                 try {
                     logger.atDebug().log("Capturing QRCode ...");
-                    Tuple2<String, Mat> qrCode = cameraController.captureQrCode();
+                    CameraController.CameraEvent qrCode = cameraController.captureQrCode();
                     String line = qrCode2String(qrCode);
                     send(line);
                     logger.atInfo().log("{}", line);

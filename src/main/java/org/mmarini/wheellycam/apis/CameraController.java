@@ -30,7 +30,6 @@ package org.mmarini.wheellycam.apis;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import org.glassfish.jersey.client.rx.rxjava2.RxFlowableInvokerProvider;
-import org.mmarini.Tuple2;
 import org.opencv.core.CvType;
 import org.opencv.core.Mat;
 import org.opencv.objdetect.QRCodeDetector;
@@ -133,11 +132,12 @@ public class CameraController {
      *
      * @throws IOException in case of error
      */
-    public Tuple2<String, Mat> captureQrCode() throws IOException {
+    public CameraEvent captureQrCode() throws IOException {
         Mat mat = capture();
+        long timestamp = System.currentTimeMillis();
         Mat points = new Mat();
         String data = new QRCodeDetector().detectAndDecode(mat, points);
-        return Tuple2.of(data, points);
+        return new CameraEvent(timestamp, data, points);
     }
 
     /**
@@ -179,6 +179,9 @@ public class CameraController {
             return control("framesize", frameSize);
         }
         return true;
+    }
+
+    public record CameraEvent(long timestamp, String qrcode, Mat points) {
     }
 
 }
