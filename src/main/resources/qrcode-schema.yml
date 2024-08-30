@@ -1,0 +1,33 @@
+---
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: https://mmarini.org/wheelly/qrcode-schema-0.1
+title: Wheelly camera schema
+
+# qrcode schema
+type: object
+properties:
+  $schema:
+    type: string
+    const: https://mmarini.org/wheelly/qrcode-schema-0.1
+  cameraUrl:
+    type: string
+  frameSize:
+    multipleOf: 1
+    minimum: 0
+    maximum: 13
+  ledIntensity:
+    multipleOf: 1
+    minimum: 0
+    maximum: 255
+  syncInterval:
+    multipleOf: 1
+    minimum: 1
+  captureInterval:
+    multipleOf: 1
+    minimum: 1
+  port:
+    multipleOf: 1
+    minimum: 1
+required:
+  - $schema
+  - cameraUrl

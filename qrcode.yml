@@ -1,0 +1,7 @@
+---
+$schema: https://mmarini.org/wheelly/qrcode-schema-0.1
+cameraUrl: http://192.168.1.89
+#ledIntensity: 1
+#frameSize: 5
+#syncInterval: 30000
+#captureInterval: 800
