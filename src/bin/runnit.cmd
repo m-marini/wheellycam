@@ -5,18 +5,14 @@ rem Remove "rem" from following two lines, if you'd like to use j2sdk.
 rem set JAVA_HOME=...
 rem set PATH=%JAVA_HOME%\bin
 
-rem run
-rem cd ..
-echo 
-rem start javaw -jar "lib/${pom.build.finalName}.jar"
-rem java -jar "lib/${pom.build.finalName}.jar" %1 %2
+echo
 java -version > nul
 IF ERRORLEVEL 2 goto noJavaw
 javaw > nul
 IF ERRORLEVEL 2 goto noJavaw
 
-rem java -cp "lib/*;../classes" org.mmarini.wheelly.apps.RobotExecutor %1 %2 %3 %4 %5 %6 %7 %8
-java --add-opens=java.base/java.nio=ALL-UNNAMED -cp "lib/*;../classes" %1 %2 %3 %4 %5 %6 %7 %8
+java -cp ${opencv.jarFile};lib/${pom.build.finalName}.jar ${jar.mainClass} %1 %2
+
 goto end
 
 :noJavaw
