@@ -8,5 +8,5 @@ See https://github.com/m-marini/wheellyj
 
 ## Release 0.1.0
 
-- Camwera server
+- Camera server
 
