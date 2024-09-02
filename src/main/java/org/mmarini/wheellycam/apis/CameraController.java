@@ -133,11 +133,11 @@ public class CameraController {
      * @throws IOException in case of error
      */
     public CameraEvent captureQrCode() throws IOException {
-        Mat mat = capture();
+        Mat image = capture();
         long timestamp = System.currentTimeMillis();
         Mat points = new Mat();
-        String data = new QRCodeDetector().detectAndDecode(mat, points);
-        return new CameraEvent(timestamp, data, points);
+        String data = new QRCodeDetector().detectAndDecode(image, points);
+        return new CameraEvent(timestamp, data, image.width(), image.height(), points);
     }
 
     /**
@@ -181,7 +181,16 @@ public class CameraController {
         return true;
     }
 
-    public record CameraEvent(long timestamp, String qrcode, Mat points) {
+    /**
+     * Stores the Camera Event properties
+     *
+     * @param timestamp the event timestamp
+     * @param qrcode    the qr code (? if unrecognized)
+     * @param width     the camera image width
+     * @param height    the camera image height
+     * @param points    the qr code vertices
+     */
+    public record CameraEvent(long timestamp, String qrcode, int width, int height, Mat points) {
     }
 
 }
