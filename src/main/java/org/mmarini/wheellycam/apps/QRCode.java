@@ -136,8 +136,8 @@ public class QRCode {
      */
     private static String qrCode2String(CameraController.CameraEvent qrCode) {
         return qrCode.qrcode().isEmpty()
-                ? format(Locale.ENGLISH, "%d ? 0 0 0 0 0 0 0 0", qrCode.timestamp())
-                : format(Locale.ENGLISH, "%d %s %.1f %.1f %.1f %.1f %.1f %.1f %.1f %.1f",
+                ? format(Locale.ENGLISH, "qr %d ? 0 0 0 0 0 0 0 0", qrCode.timestamp())
+                : format(Locale.ENGLISH, "qr %d %s %.1f %.1f %.1f %.1f %.1f %.1f %.1f %.1f",
                 qrCode.timestamp(),
                 qrCode.qrcode(),
                 qrCode.points().get(0, 0)[0],
