@@ -136,10 +136,13 @@ public class QRCode {
      */
     private static String qrCode2String(CameraController.CameraEvent qrCode) {
         return qrCode.qrcode().isEmpty()
-                ? format(Locale.ENGLISH, "qr %d ? 0 0 0 0 0 0 0 0", qrCode.timestamp())
-                : format(Locale.ENGLISH, "qr %d %s %.1f %.1f %.1f %.1f %.1f %.1f %.1f %.1f",
+                ? format(Locale.ENGLISH, "qr %d ? %d %d 0 0 0 0 0 0 0 0",
+                qrCode.timestamp(),
+                qrCode.width(), qrCode.height())
+                : format(Locale.ENGLISH, "qr %d %s %d %d %.1f %.1f %.1f %.1f %.1f %.1f %.1f %.1f",
                 qrCode.timestamp(),
                 qrCode.qrcode(),
+                qrCode.width(), qrCode.height(),
                 qrCode.points().get(0, 0)[0],
                 qrCode.points().get(0, 0)[1],
                 qrCode.points().get(0, 1)[0],
