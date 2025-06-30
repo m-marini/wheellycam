@@ -119,8 +119,7 @@ public class CameraController {
      *
      * @throws IOException in case of error
      */
-    Mat capture() throws IOException {
-        BufferedImage img = ImageIO.read(URI.create(captureUrl + "?_cb=" + System.currentTimeMillis()).toURL());
+    Mat capture(BufferedImage img) throws IOException {
         byte[] pixels = ((DataBufferByte) img.getRaster().getDataBuffer()).getData();
         Mat mat = new Mat(img.getHeight(), img.getWidth(), CvType.CV_8UC(3));
         mat.put(0, 0, pixels);
@@ -128,12 +127,21 @@ public class CameraController {
     }
 
     /**
+     * Returns the capture image
+     *
+     * @throws IOException in case of error
+     */
+    public BufferedImage captureImage() throws IOException {
+        return ImageIO.read(URI.create(captureUrl + "?_cb=" + System.currentTimeMillis()).toURL());
+    }
+
+    /**
      * Returns the captured qr code if any
      *
      * @throws IOException in case of error
      */
-    public CameraEvent captureQrCode() throws IOException {
-        Mat image = capture();
+    public CameraEvent captureQrCode(BufferedImage img) throws IOException {
+        Mat image = capture(img);
         long timestamp = System.currentTimeMillis();
         Mat points = new Mat();
         String data = new QRCodeDetector().detectAndDecode(image, points);
