@@ -35,6 +35,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.opencv.core.Mat;
 
+import java.awt.image.BufferedImage;
 import java.io.IOException;
 
 import static org.hamcrest.MatcherAssert.assertThat;
@@ -49,7 +50,8 @@ class CameraControllerTest {
         // Given ...
 
         // When ...
-        CameraController.CameraEvent qrcode = cameraController.captureQrCode();
+        BufferedImage img = cameraController.captureImage();
+        CameraController.CameraEvent qrcode = cameraController.captureQrCode(img);
 
         // Then ...
         assertNotNull(qrcode);
@@ -62,7 +64,8 @@ class CameraControllerTest {
         // Given ...
 
         // When ...
-        Mat image = cameraController.capture();
+        BufferedImage img = cameraController.captureImage();
+        Mat image = cameraController.capture(img);
 
         // Then ...
         assertNotNull(image);

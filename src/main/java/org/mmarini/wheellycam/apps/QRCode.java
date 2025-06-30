@@ -36,12 +36,21 @@ import net.sourceforge.argparse4j.impl.Arguments;
 import net.sourceforge.argparse4j.inf.ArgumentParser;
 import net.sourceforge.argparse4j.inf.ArgumentParserException;
 import net.sourceforge.argparse4j.inf.Namespace;
+import org.mmarini.swing.GridLayoutHelper;
 import org.mmarini.wheellycam.apis.CameraController;
+import org.mmarini.wheellycam.swing.Utils;
 import org.mmarini.yaml.Locator;
 import org.opencv.core.Core;
+import org.opencv.core.Mat;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import javax.swing.*;
+import javax.ws.rs.ProcessingException;
+import java.awt.*;
+import java.awt.event.WindowAdapter;
+import java.awt.event.WindowEvent;
+import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.net.ServerSocket;
@@ -51,6 +60,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.atomic.AtomicReference;
 
+import static java.lang.Math.round;
 import static java.lang.String.format;
 import static org.mmarini.yaml.Utils.fromFile;
 
@@ -58,6 +68,11 @@ import static org.mmarini.yaml.Utils.fromFile;
  * QrCode image recognizer
  */
 public class QRCode {
+    public static final Color QR_FRAME_COLOR = Color.WHITE;
+    public static final Font QR_FONT = Font.decode(Font.DIALOG).deriveFont(20f);
+    public static final BasicStroke QR_STROKE = new BasicStroke(3);
+    public static final Color OFF_COLOR = Color.RED;
+    public static final Color ON_COLOR = Color.GREEN;
     private static final String QRCODE_SCHEMA_YML = "https://mmarini.org/wheelly/qrcode-schema-0.1";
     private static final Logger logger = LoggerFactory.getLogger(QRCode.class);
 
@@ -101,7 +116,7 @@ public class QRCode {
         ArgumentParser parser = ArgumentParsers.newFor(QRCode.class.getName()).build()
                 .defaultHelp(true)
                 .version(Messages.getString("QRCode.title"))
-                .description("Run the test.");
+                .description("Run the QR Code server.");
         parser.addArgument("-c", "--config")
                 .setDefault("qrcode.yml")
                 .help("specify the configuration file");
@@ -155,6 +170,10 @@ public class QRCode {
 
     private final Namespace args;
     private final AtomicReference<List<Client>> clients;
+    private final JFrame frame;
+    private final JTextField statusText;
+    private final JLabel imageView;
+    private boolean exit;
 
     /**
      * @param args the argument
@@ -162,13 +181,63 @@ public class QRCode {
     public QRCode(Namespace args) {
         this.args = args;
         this.clients = new AtomicReference<>(List.of());
+        this.statusText = new JTextField();
+        this.frame = new JFrame();
+        this.imageView = new JLabel();
+
+        statusText.setEditable(false);
+        statusText.setColumns(80);
+        statusText.setHorizontalAlignment(JTextField.CENTER);
+        statusText.setBackground(Color.BLACK);
+
+        imageView.setPreferredSize(new Dimension(300, 300));
+        frame.setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
+        frame.setSize(800, 600);
+        frame.setTitle(Messages.getString("QRCode.title"));
+
+        createContent();
+
+        createFlow();
+    }
+
+    /**
+     * Creates content
+     */
+    private void createContent() {
+        new GridLayoutHelper<>(frame.getContentPane()).modify("insets,2,2")
+                .modify("at,0,0 nofill weight,1,1 center").add(imageView)
+                .modify("at,0,1 hfill weight,1,0").add(statusText);
+    }
+
+    private void createFlow() {
+        frame.addWindowListener(new WindowAdapter() {
+            @Override
+            public void windowClosed(WindowEvent e) {
+                exit = true;
+                logger.atInfo().log("Closing ...");
+            }
+        });
+    }
+
+    /**
+     * Display message info
+     *
+     * @param color the colour info
+     * @param fmt   the format
+     * @param args  the arguments
+     */
+    private void info(Color color, String fmt, Object... args) {
+        String text = format(fmt, args);
+        statusText.setForeground(color);
+        statusText.setText(text);
+        logger.atInfo().log(text);
     }
 
     /**
      * Runs the application
      */
     private void run() throws IOException {
-        logger.atInfo().log("Running {}", QRCode.class.getName());
+        info(OFF_COLOR, "Running %s", QRCode.class.getName());
         JsonNode config = fromFile(args.getString("config"));
         JsonSchemas.instance().validateOrThrow(config, QRCODE_SCHEMA_YML);
         String url = Locator.locate("cameraUrl").getNode(config).asText();
@@ -180,23 +249,53 @@ public class QRCode {
         CameraController cameraController = CameraController.create(url, ledIntensity, frameSize);
         long syncTimeout = 0;
         boolean synchro = false;
+
+        frame.setVisible(true);
+        Utils.center(frame);
+
+        this.exit = false;
         Schedulers.io().scheduleDirect(() -> runServer(serverPort));
-        for (; ; ) {
+        while (!exit) {
             long time = System.currentTimeMillis();
+            // Synchronize camera
             if (time >= syncTimeout || !synchro) {
-                logger.atInfo().log("Synchronizing camera ...");
-                if (cameraController.sync()) {
-                    syncTimeout = time + syncInterval;
-                    synchro = true;
+                try {
+                    info(OFF_COLOR, "Synchronizing camera ...");
+                    if (cameraController.sync()) {
+                        syncTimeout = time + syncInterval;
+                        synchro = true;
+                    }
+                } catch (ProcessingException e) {
+                    logger.atError().setCause(e).log("Error synchronizing camera");
+                    synchro = false;
                 }
             }
             if (synchro) {
                 try {
-                    logger.atDebug().log("Capturing QRCode ...");
-                    CameraController.CameraEvent qrCode = cameraController.captureQrCode();
+                    // Capture image
+                    info(ON_COLOR, "Capturing image ...");
+                    BufferedImage img = cameraController.captureImage();
+                    CameraController.CameraEvent qrCode = cameraController.captureQrCode(img);
+                    if (!qrCode.qrcode().isEmpty()) {
+                        Mat pts = qrCode.points();
+                        Graphics2D gr = img.createGraphics();
+                        Polygon poly = new Polygon();
+                        gr.setStroke(QR_STROKE);
+                        gr.setFont(QR_FONT);
+                        for (int i = 0; i < 4; i++) {
+                            double[] p = pts.get(0, i);
+                            int x = (int) round(p[0]);
+                            int y = (int) round(p[1]);
+                            poly.addPoint(x, y);
+                            gr.drawString(qrCode.qrcode(), x, y);
+                        }
+                        gr.setColor(QR_FRAME_COLOR);
+                        gr.draw(poly);
+                    }
+                    imageView.setIcon(new ImageIcon(img));
                     String line = qrCode2String(qrCode);
                     send(line);
-                    logger.atInfo().log("{}", line);
+                    info(ON_COLOR, "%s", line);
                     Thread.sleep(captureInterval);
                 } catch (IOException e) {
                     logger.atError().setCause(e).log("Error capturing qrcode");
@@ -206,6 +305,7 @@ public class QRCode {
                 }
             }
         }
+        logger.atInfo().log("Completed.");
     }
 
     /**
@@ -215,16 +315,16 @@ public class QRCode {
      */
     private void runServer(int serverPort) {
         try (ServerSocket serverSocket = new ServerSocket(serverPort)) {
-            for (; ; ) {
-                // Waits for a client access
+            while (!exit) {
+                // Waits for client access
                 Socket socket = serverSocket.accept();
-                logger.atInfo().log("New client {}:{}",
+                info(ON_COLOR, "New client %s:%d",
                         socket.getInetAddress().getCanonicalHostName(),
                         socket.getPort());
                 Client cli = new Client(socket,
                         new PrintWriter(socket.getOutputStream(), true)
                 );
-                // Add list
+                // Add the list
                 this.clients.updateAndGet(list -> {
                     List<Client> clients = new ArrayList<>(list);
                     clients.add(cli);
