@@ -331,6 +331,7 @@ public class QRCode {
             // Synchronize camera
             sync();
         } else if (pause) {
+            info(PAUSE_COLOR, "Pause");
             waitCaptureInterval();
         } else {
             capture();
