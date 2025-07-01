@@ -30,13 +30,16 @@ package org.mmarini.wheellycam.apps;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import io.reactivex.rxjava3.core.Completable;
+import io.reactivex.rxjava3.core.Single;
 import io.reactivex.rxjava3.schedulers.Schedulers;
+import io.reactivex.rxjava3.subjects.CompletableSubject;
 import net.sourceforge.argparse4j.ArgumentParsers;
 import net.sourceforge.argparse4j.impl.Arguments;
 import net.sourceforge.argparse4j.inf.ArgumentParser;
 import net.sourceforge.argparse4j.inf.ArgumentParserException;
 import net.sourceforge.argparse4j.inf.Namespace;
 import org.mmarini.swing.GridLayoutHelper;
+import org.mmarini.swing.SwingUtils;
 import org.mmarini.wheellycam.apis.CameraController;
 import org.mmarini.wheellycam.swing.Utils;
 import org.mmarini.yaml.Locator;
@@ -46,8 +49,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import javax.swing.*;
-import javax.ws.rs.ProcessingException;
 import java.awt.*;
+import java.awt.event.ActionEvent;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.awt.image.BufferedImage;
@@ -58,6 +61,7 @@ import java.net.Socket;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static java.lang.Math.round;
@@ -73,6 +77,7 @@ public class QRCode {
     public static final BasicStroke QR_STROKE = new BasicStroke(3);
     public static final Color OFF_COLOR = Color.RED;
     public static final Color ON_COLOR = Color.GREEN;
+    public static final Color PAUSE_COLOR = Color.YELLOW;
     private static final String QRCODE_SCHEMA_YML = "https://mmarini.org/wheelly/qrcode-schema-0.1";
     private static final Logger logger = LoggerFactory.getLogger(QRCode.class);
 
@@ -173,7 +178,14 @@ public class QRCode {
     private final JFrame frame;
     private final JTextField statusText;
     private final JLabel imageView;
+    private final JToggleButton pauseButton;
+    private final CompletableSubject serverCompleted;
     private boolean exit;
+    private boolean pause;
+    private CameraController cameraController;
+    private long captureInterval;
+    private long syncInterval;
+    private long syncTimeout;
 
     /**
      * @param args the argument
@@ -184,6 +196,8 @@ public class QRCode {
         this.statusText = new JTextField();
         this.frame = new JFrame();
         this.imageView = new JLabel();
+        this.pauseButton = SwingUtils.createToggleButton("QRCode.pauseButton");
+        this.serverCompleted = CompletableSubject.create();
 
         statusText.setEditable(false);
         statusText.setColumns(80);
@@ -191,6 +205,7 @@ public class QRCode {
         statusText.setBackground(Color.BLACK);
 
         imageView.setPreferredSize(new Dimension(300, 300));
+
         frame.setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
         frame.setSize(800, 600);
         frame.setTitle(Messages.getString("QRCode.title"));
@@ -201,14 +216,35 @@ public class QRCode {
     }
 
     /**
+     * Captures asynchronous image
+     */
+    private void capture() {
+        if (exit) {
+            serverCompleted.onComplete();
+        } else {
+            Single.fromSupplier(() -> {
+                        info(ON_COLOR, "Capturing image ...");
+                        return cameraController.captureImage();
+                    })
+                    .subscribeOn(Schedulers.io())
+                    .doOnSuccess(this::onCapture)
+                    .doOnError(this::onCaptureError)
+                    .subscribe();
+        }
+    }
+    /**
      * Creates content
      */
     private void createContent() {
         new GridLayoutHelper<>(frame.getContentPane()).modify("insets,2,2")
-                .modify("at,0,0 nofill weight,1,1 center").add(imageView)
-                .modify("at,0,1 hfill weight,1,0").add(statusText);
+                .modify("at,0,0 nofill weight,0,0 center").add(pauseButton)
+                .modify("at,0,1 nofill weight,1,1 center").add(imageView)
+                .modify("at,0,2 hfill weight,1,0").add(statusText);
     }
 
+    /**
+     * Creates control flows
+     */
     private void createFlow() {
         frame.addWindowListener(new WindowAdapter() {
             @Override
@@ -217,6 +253,7 @@ public class QRCode {
                 logger.atInfo().log("Closing ...");
             }
         });
+        pauseButton.addActionListener(this::onPause);
     }
 
     /**
@@ -234,6 +271,118 @@ public class QRCode {
     }
 
     /**
+     * Handles captured image
+     * @param img the image
+     */
+    private void onCapture(BufferedImage img) {
+        logger.atDebug().log("Captured");
+        try {
+            // Decodes image for QR code
+            CameraController.CameraEvent qrCode = cameraController.captureQrCode(img);
+            if (!qrCode.qrcode().isEmpty()) {
+                // Draws qr code bound
+                Mat pts = qrCode.points();
+                Graphics2D gr = img.createGraphics();
+                Polygon poly = new Polygon();
+                gr.setStroke(QR_STROKE);
+                gr.setFont(QR_FONT);
+                for (int i = 0; i < 4; i++) {
+                    double[] p = pts.get(0, i);
+                    int x = (int) round(p[0]);
+                    int y = (int) round(p[1]);
+                    poly.addPoint(x, y);
+                    gr.drawString(qrCode.qrcode(), x, y);
+                }
+                gr.setColor(QR_FRAME_COLOR);
+                gr.draw(poly);
+            }
+            imageView.setIcon(new ImageIcon(img));
+            // Sends qr code message
+            String line = qrCode2String(qrCode);
+            send(line);
+            info(ON_COLOR, "%s", line);
+            if (pause) {
+                info(PAUSE_COLOR, "Pause");
+            }
+            // Wait for capture interval
+            waitCaptureInterval();
+        } catch (IOException e) {
+            logger.atError().setCause(e).log("Error decoding qrcode");
+            sync();
+        }
+    }
+
+    /**
+     * Handles the capture error
+     *
+     * @param e the error
+     */
+    private void onCaptureError(Throwable e) {
+        logger.atError().setCause(e).log("Error capturing image");
+        sync();
+    }
+
+    /**
+     * Handles the timeout capture interval
+     */
+    private void onCaptureInterval() {
+        long time = System.currentTimeMillis();
+        if (time >= syncTimeout) {
+            // Synchronize camera
+            sync();
+        } else if (pause) {
+            info(PAUSE_COLOR, "Pause");
+            waitCaptureInterval();
+        } else {
+            capture();
+        }
+    }
+
+    /**
+     * Handles the pause button
+     *
+     * @param actionEvent the event
+     */
+    private void onPause(ActionEvent actionEvent) {
+        pause = pauseButton.isSelected();
+    }
+
+    /**
+     * Handles the synchronised result
+     *
+     * @param synchro true if success
+     */
+    private void onSync(boolean synchro) {
+        logger.atDebug().log("Synchronized {}", synchro);
+        if (exit) {
+            serverCompleted.onComplete();
+        } else if (synchro) {
+            // Set the next synchronisation time
+            long time = System.currentTimeMillis();
+            syncTimeout = time + syncInterval;
+            if (pause) {
+                info(PAUSE_COLOR, "Pause");
+                waitCaptureInterval();
+            } else {
+                capture();
+            }
+        } else {
+            // Repeat the synchronisation if not synchronised successfully
+            sync();
+        }
+    }
+
+    /**
+     * Handles the synchronisation error
+     *
+     * @param e the error
+     */
+    private void onSyncError(Throwable e) {
+        logger.atError().setCause(e).log("Error synchronizing camera");
+        sync();
+    }
+
+    /**
      * Runs the application
      */
     private void run() throws IOException {
@@ -242,70 +391,54 @@ public class QRCode {
         JsonSchemas.instance().validateOrThrow(config, QRCODE_SCHEMA_YML);
         String url = Locator.locate("cameraUrl").getNode(config).asText();
         int ledIntensity = Locator.locate("ledIntensity").getNode(config).asInt(255);
-        long captureInterval = Locator.locate("captureInterval").getNode(config).asLong(800);
-        long syncInterval = Locator.locate("syncInterval").getNode(config).asLong(30000);
+        this.captureInterval = Locator.locate("captureInterval").getNode(config).asLong(800);
+        this.syncInterval = Locator.locate("syncInterval").getNode(config).asLong(30000);
         int frameSize = Locator.locate("frameSize").getNode(config).asInt(CameraController.SIZE_320X240);
         int serverPort = Locator.locate("port").getNode(config).asInt(8100);
-        CameraController cameraController = CameraController.create(url, ledIntensity, frameSize);
-        long syncTimeout = 0;
-        boolean synchro = false;
+        this.cameraController = CameraController.create(url, ledIntensity, frameSize);
 
         frame.setVisible(true);
         Utils.center(frame);
 
         this.exit = false;
+        this.pause = false;
         Schedulers.io().scheduleDirect(() -> runServer(serverPort));
-        while (!exit) {
-            long time = System.currentTimeMillis();
-            // Synchronize camera
-            if (time >= syncTimeout || !synchro) {
-                try {
-                    info(OFF_COLOR, "Synchronizing camera ...");
-                    if (cameraController.sync()) {
-                        syncTimeout = time + syncInterval;
-                        synchro = true;
-                    }
-                } catch (ProcessingException e) {
-                    logger.atError().setCause(e).log("Error synchronizing camera");
-                    synchro = false;
-                }
-            }
-            if (synchro) {
-                try {
-                    // Capture image
-                    info(ON_COLOR, "Capturing image ...");
-                    BufferedImage img = cameraController.captureImage();
-                    CameraController.CameraEvent qrCode = cameraController.captureQrCode(img);
-                    if (!qrCode.qrcode().isEmpty()) {
-                        Mat pts = qrCode.points();
-                        Graphics2D gr = img.createGraphics();
-                        Polygon poly = new Polygon();
-                        gr.setStroke(QR_STROKE);
-                        gr.setFont(QR_FONT);
-                        for (int i = 0; i < 4; i++) {
-                            double[] p = pts.get(0, i);
-                            int x = (int) round(p[0]);
-                            int y = (int) round(p[1]);
-                            poly.addPoint(x, y);
-                            gr.drawString(qrCode.qrcode(), x, y);
-                        }
-                        gr.setColor(QR_FRAME_COLOR);
-                        gr.draw(poly);
-                    }
-                    imageView.setIcon(new ImageIcon(img));
-                    String line = qrCode2String(qrCode);
-                    send(line);
-                    info(ON_COLOR, "%s", line);
-                    Thread.sleep(captureInterval);
-                } catch (IOException e) {
-                    logger.atError().setCause(e).log("Error capturing qrcode");
-                    synchro = false;
-                } catch (InterruptedException e) {
-                    logger.atError().setCause(e).log("Error capturing qrcode");
-                }
-            }
+        sync();
+        serverCompleted.blockingAwait();
+        logger.atInfo().log("Completed");
+    }
+
+    /**
+     * Synchronises camera
+     */
+    void sync() {
+        if (exit) {
+            serverCompleted.onComplete();
+        } else {
+            Single.fromSupplier(() -> {
+                        info(OFF_COLOR, "Synchronizing camera ...");
+                        return cameraController.sync();
+                    })
+                    .subscribeOn(Schedulers.io())
+                    .doOnSuccess(this::onSync)
+                    .doOnError(this::onSyncError)
+                    .subscribe();
         }
-        logger.atInfo().log("Completed.");
+    }
+
+    /**
+     * Waits for capture interval
+     */
+    private void waitCaptureInterval() {
+        logger.atDebug().log("Wait interval timeout");
+        if (exit) {
+            serverCompleted.onComplete();
+        } else {
+            Completable.timer(captureInterval, TimeUnit.MILLISECONDS)
+                    .subscribeOn(Schedulers.io())
+                    .doOnComplete(this::onCaptureInterval)
+                    .subscribe();
+        }
     }
 
     /**

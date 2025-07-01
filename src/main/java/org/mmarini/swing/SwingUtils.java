@@ -168,6 +168,26 @@ public interface SwingUtils {
         return menu;
     }
 
+    static JToggleButton createToggleButton(String key) {
+        JToggleButton button = new JToggleButton();
+        Messages.getStringOpt(key + ".icon")
+                .flatMap(s -> Optional.ofNullable(SwingUtils.class.getResource(s)))
+                .map(ImageIcon::new)
+                .ifPresentOrElse(button::setIcon,
+                        () -> button.setText(Messages.getString(key + ".name")));
+
+        Messages.getStringOpt(key + ".mnemonic")
+                .map(s -> s.charAt(0))
+                .ifPresent(button::setMnemonic);
+        Messages.getStringOpt(key + ".tip")
+                .ifPresent(button::setToolTipText);
+        Messages.getStringOpt(key + ".selectedIcon")
+                .flatMap(s -> Optional.ofNullable(SwingUtils.class.getResource(s)))
+                .map(ImageIcon::new)
+                .ifPresent(button::setSelectedIcon);
+        return button;
+    }
+
     /**
      * Returns the initialized toolbar button
      *
