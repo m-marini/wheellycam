@@ -29,10 +29,10 @@
 package org.mmarini.wheellycam.apps;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import io.reactivex.rxjava3.core.Completable;
+import io.reactivex.rxjava3.core.Flowable;
 import io.reactivex.rxjava3.core.Single;
+import io.reactivex.rxjava3.disposables.Disposable;
 import io.reactivex.rxjava3.schedulers.Schedulers;
-import io.reactivex.rxjava3.subjects.CompletableSubject;
 import net.sourceforge.argparse4j.ArgumentParsers;
 import net.sourceforge.argparse4j.impl.Arguments;
 import net.sourceforge.argparse4j.inf.ArgumentParser;
@@ -41,6 +41,7 @@ import net.sourceforge.argparse4j.inf.Namespace;
 import org.mmarini.swing.GridLayoutHelper;
 import org.mmarini.swing.SwingUtils;
 import org.mmarini.wheellycam.apis.CameraController;
+import org.mmarini.wheellycam.apis.CameraEvent;
 import org.mmarini.wheellycam.swing.Utils;
 import org.mmarini.yaml.Locator;
 import org.opencv.core.Core;
@@ -55,13 +56,10 @@ import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
-import java.io.PrintWriter;
-import java.net.ServerSocket;
-import java.net.Socket;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Locale;
-import java.util.concurrent.TimeUnit;
+import java.net.InetSocketAddress;
+import java.nio.channels.AsynchronousServerSocketChannel;
+import java.nio.channels.AsynchronousSocketChannel;
+import java.util.Objects;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static java.lang.Math.round;
@@ -78,40 +76,15 @@ public class QRCode {
     public static final Color OFF_COLOR = Color.RED;
     public static final Color ON_COLOR = Color.GREEN;
     public static final Color PAUSE_COLOR = Color.YELLOW;
+    public static final int DEFAULT_LED_INTENSITY = 255;
+    public static final int DEFAULT_CAPTURE_INTERVAL = 800;
+    public static final int DEFAULT_RETRY_INTERVAL = 2400;
+    public static final int DEFAULT_SYNC_INTERVAL = 30000;
     private static final String QRCODE_SCHEMA_YML = "https://mmarini.org/wheelly/qrcode-schema-0.1";
     private static final Logger logger = LoggerFactory.getLogger(QRCode.class);
 
     static {
         System.loadLibrary(Core.NATIVE_LIBRARY_NAME);
-    }
-
-    /**
-     * Returns the list of clean clients
-     */
-    static private List<Client> cleanClients(List<Client> clients) {
-        // Test and filter for closed socket
-        List<Client> closed = clients.stream()
-                .filter(client -> {
-                    try {
-                        client.socket.getInputStream().available();
-                        client.socket.getOutputStream().flush();
-                        return !client.socket.isConnected() || client.socket.isClosed();
-                    } catch (IOException e) {
-                        return true;
-                    }
-                })
-                .toList();
-        if (closed.isEmpty()) {
-            return clients;
-        }
-        clients.forEach(client ->
-                logger.atInfo().log("Closed {}:{}",
-                        client.socket.getInetAddress().getCanonicalHostName(),
-                        client.socket.getPort())
-        );
-        return clients.stream()
-                .filter(client -> !closed.contains(client))
-                .toList();
     }
 
     /**
@@ -149,55 +122,26 @@ public class QRCode {
         }
     }
 
-    /**
-     * Returns the string of qrcode result
-     *
-     * @param qrCode the qrcode result
-     */
-    private static String qrCode2String(CameraController.CameraEvent qrCode) {
-        return qrCode.qrcode().isEmpty()
-                ? format(Locale.ENGLISH, "qr %d ? %d %d 0 0 0 0 0 0 0 0",
-                qrCode.timestamp(),
-                qrCode.width(), qrCode.height())
-                : format(Locale.ENGLISH, "qr %d %s %d %d %.1f %.1f %.1f %.1f %.1f %.1f %.1f %.1f",
-                qrCode.timestamp(),
-                qrCode.qrcode(),
-                qrCode.width(), qrCode.height(),
-                qrCode.points().get(0, 0)[0],
-                qrCode.points().get(0, 0)[1],
-                qrCode.points().get(0, 1)[0],
-                qrCode.points().get(0, 1)[1],
-                qrCode.points().get(0, 2)[0],
-                qrCode.points().get(0, 2)[1],
-                qrCode.points().get(0, 3)[0],
-                qrCode.points().get(0, 3)[1]);
-    }
-
     private final Namespace args;
-    private final AtomicReference<List<Client>> clients;
     private final JFrame frame;
     private final JTextField statusText;
     private final JLabel imageView;
     private final JToggleButton pauseButton;
-    private final CompletableSubject serverCompleted;
-    private boolean exit;
-    private boolean pause;
+    private final AtomicReference<Status> status;
     private CameraController cameraController;
-    private long captureInterval;
-    private long syncInterval;
-    private long syncTimeout;
+    private AsynchronousServerSocketChannel serverSocket;
 
     /**
-     * @param args the argument
+     * Create the camera server
+     * @param args the arguments
      */
     public QRCode(Namespace args) {
         this.args = args;
-        this.clients = new AtomicReference<>(List.of());
         this.statusText = new JTextField();
         this.frame = new JFrame();
         this.imageView = new JLabel();
         this.pauseButton = SwingUtils.createToggleButton("QRCode.pauseButton");
-        this.serverCompleted = CompletableSubject.create();
+        this.status = new AtomicReference<>(new Status(false, null));
 
         statusText.setEditable(false);
         statusText.setColumns(80);
@@ -216,23 +160,6 @@ public class QRCode {
     }
 
     /**
-     * Captures asynchronous image
-     */
-    private void capture() {
-        if (exit) {
-            serverCompleted.onComplete();
-        } else {
-            Single.fromSupplier(() -> {
-                        info(ON_COLOR, "Capturing image ...");
-                        return cameraController.captureImage();
-                    })
-                    .subscribeOn(Schedulers.io())
-                    .doOnSuccess(this::onCapture)
-                    .doOnError(this::onCaptureError)
-                    .subscribe();
-        }
-    }
-    /**
      * Creates content
      */
     private void createContent() {
@@ -249,7 +176,10 @@ public class QRCode {
         frame.addWindowListener(new WindowAdapter() {
             @Override
             public void windowClosed(WindowEvent e) {
-                exit = true;
+                if (cameraController != null) {
+                    cameraController.close();
+                }
+                stopServer();
                 logger.atInfo().log("Closing ...");
             }
         });
@@ -271,71 +201,77 @@ public class QRCode {
     }
 
     /**
-     * Handles captured image
-     * @param img the image
+     * Handle the acceptation of client socket
+     * @param socket the socket
      */
-    private void onCapture(BufferedImage img) {
-        logger.atDebug().log("Captured");
-        try {
-            // Decodes image for QR code
-            CameraController.CameraEvent qrCode = cameraController.captureQrCode(img);
-            if (!qrCode.qrcode().isEmpty()) {
-                // Draws qr code bound
-                Mat pts = qrCode.points();
-                Graphics2D gr = img.createGraphics();
-                Polygon poly = new Polygon();
-                gr.setStroke(QR_STROKE);
-                gr.setFont(QR_FONT);
-                for (int i = 0; i < 4; i++) {
-                    double[] p = pts.get(0, i);
-                    int x = (int) round(p[0]);
-                    int y = (int) round(p[1]);
-                    poly.addPoint(x, y);
-                    gr.drawString(qrCode.qrcode(), x, y);
+    private void onAccept(AsynchronousSocketChannel socket) {
+        Status s1 = status.updateAndGet(s -> s.accepting(null));
+        if (!s1.exit()) {
+            try {
+                CameraClient cli = CameraClient.create(socket);
+                Flowable<String> textFlow = cameraController.readCamera()
+                        .map(CameraEvent::line);
+                cli.sendLines(textFlow);
+            } catch (IOException e) {
+                logger.atError().setCause(e).log("Error creating client");
+                try {
+                    socket.close();
+                } catch (IOException e1) {
+                    logger.atError().setCause(e1).log("Error closing client socket");
                 }
-                gr.setColor(QR_FRAME_COLOR);
-                gr.draw(poly);
             }
-            imageView.setIcon(new ImageIcon(img));
-            // Sends qr code message
-            String line = qrCode2String(qrCode);
-            send(line);
-            info(ON_COLOR, "%s", line);
-            if (pause) {
-                info(PAUSE_COLOR, "Pause");
-            }
-            // Wait for capture interval
-            waitCaptureInterval();
-        } catch (IOException e) {
-            logger.atError().setCause(e).log("Error decoding qrcode");
-            sync();
+            startServer();
         }
     }
 
     /**
-     * Handles the capture error
+     * Handles the acceptance error
      *
-     * @param e the error
+     * @param error the error
      */
-    private void onCaptureError(Throwable e) {
-        logger.atError().setCause(e).log("Error capturing image");
-        sync();
+    private void onAcceptError(Throwable error) {
+        Status s1 = status.updateAndGet(s -> s.accepting(null));
+        logger.atError().setCause(error).log("Error accepting client");
+        if (!s1.exit()) {
+            startServer();
+        }
     }
 
     /**
-     * Handles the timeout capture interval
+     * Handles the camera error
+     *
+     * @param error the error
      */
-    private void onCaptureInterval() {
-        long time = System.currentTimeMillis();
-        if (time >= syncTimeout) {
-            // Synchronize camera
-            sync();
-        } else if (pause) {
-            info(PAUSE_COLOR, "Pause");
-            waitCaptureInterval();
-        } else {
-            capture();
+    private void onCameraError(Throwable error) {
+        logger.atError().setCause(error).log("Error reading camera event");
+    }
+
+    /**
+     * Handles the camera event
+     *
+     * @param event the camera event
+     */
+    private void onCameraEvent(CameraEvent event) {
+        BufferedImage img = event.image();
+        if (!event.qrcode().isEmpty()) {
+            // Draws qr code bound
+            Mat pts = event.points();
+            Graphics2D gr = img.createGraphics();
+            Polygon poly = new Polygon();
+            gr.setStroke(QR_STROKE);
+            gr.setFont(QR_FONT);
+            for (int i = 0; i < 4; i++) {
+                double[] p = pts.get(0, i);
+                int x = (int) round(p[0]);
+                int y = (int) round(p[1]);
+                poly.addPoint(x, y);
+                gr.drawString(event.qrcode(), x, y);
+            }
+            gr.setColor(QR_FRAME_COLOR);
+            gr.draw(poly);
         }
+        imageView.setIcon(new ImageIcon(img));
+        info(ON_COLOR, "%s", event.line());
     }
 
     /**
@@ -344,42 +280,7 @@ public class QRCode {
      * @param actionEvent the event
      */
     private void onPause(ActionEvent actionEvent) {
-        pause = pauseButton.isSelected();
-    }
-
-    /**
-     * Handles the synchronised result
-     *
-     * @param synchro true if success
-     */
-    private void onSync(boolean synchro) {
-        logger.atDebug().log("Synchronized {}", synchro);
-        if (exit) {
-            serverCompleted.onComplete();
-        } else if (synchro) {
-            // Set the next synchronisation time
-            long time = System.currentTimeMillis();
-            syncTimeout = time + syncInterval;
-            if (pause) {
-                info(PAUSE_COLOR, "Pause");
-                waitCaptureInterval();
-            } else {
-                capture();
-            }
-        } else {
-            // Repeat the synchronisation if not synchronised successfully
-            sync();
-        }
-    }
-
-    /**
-     * Handles the synchronisation error
-     *
-     * @param e the error
-     */
-    private void onSyncError(Throwable e) {
-        logger.atError().setCause(e).log("Error synchronizing camera");
-        sync();
+        cameraController.pause(pauseButton.isSelected());
     }
 
     /**
@@ -390,102 +291,70 @@ public class QRCode {
         JsonNode config = fromFile(args.getString("config"));
         JsonSchemas.instance().validateOrThrow(config, QRCODE_SCHEMA_YML);
         String url = Locator.locate("cameraUrl").getNode(config).asText();
-        int ledIntensity = Locator.locate("ledIntensity").getNode(config).asInt(255);
-        this.captureInterval = Locator.locate("captureInterval").getNode(config).asLong(800);
-        this.syncInterval = Locator.locate("syncInterval").getNode(config).asLong(30000);
+        int ledIntensity = Locator.locate("ledIntensity").getNode(config).asInt(DEFAULT_LED_INTENSITY);
+        long captureInterval = Locator.locate("captureInterval").getNode(config).asLong(DEFAULT_CAPTURE_INTERVAL);
+        long retryInterval = Locator.locate("retryInterval").getNode(config).asLong(DEFAULT_RETRY_INTERVAL);
+        long syncInterval = Locator.locate("syncInterval").getNode(config).asLong(DEFAULT_SYNC_INTERVAL);
         int frameSize = Locator.locate("frameSize").getNode(config).asInt(CameraController.SIZE_320X240);
         int serverPort = Locator.locate("port").getNode(config).asInt(8100);
-        this.cameraController = CameraController.create(url, ledIntensity, frameSize);
+        // Creates the server socket
+        this.serverSocket = AsynchronousServerSocketChannel.open()
+                .bind(new InetSocketAddress(serverPort));
+
+        // Creates the camera controller
+        this.cameraController = CameraController.create(url, ledIntensity, frameSize, retryInterval, syncInterval, captureInterval);
+        cameraController.readCamera()
+                .subscribeOn(Schedulers.io())
+                .subscribe(this::onCameraEvent,
+                        this::onCameraError);
+
 
         frame.setVisible(true);
         Utils.center(frame);
 
-        this.exit = false;
-        this.pause = false;
-        Schedulers.io().scheduleDirect(() -> runServer(serverPort));
-        sync();
-        serverCompleted.blockingAwait();
-        logger.atInfo().log("Completed");
+        cameraController.start();
+        startServer();
+        cameraController.readClosed().blockingAwait();
+        logger.atInfo().log("Controller closed");
     }
 
     /**
-     * Synchronises camera
+     * Starts server
      */
-    void sync() {
-        if (exit) {
-            serverCompleted.onComplete();
-        } else {
-            Single.fromSupplier(() -> {
-                        info(OFF_COLOR, "Synchronizing camera ...");
-                        return cameraController.sync();
-                    })
-                    .subscribeOn(Schedulers.io())
-                    .doOnSuccess(this::onSync)
-                    .doOnError(this::onSyncError)
-                    .subscribe();
+    private void startServer() {
+        Disposable accepting = Single.fromFuture(serverSocket.accept())
+                .subscribeOn(Schedulers.io())
+                .subscribe(this::onAccept,
+                        this::onAcceptError);
+        status.updateAndGet(s -> s.accepting(accepting));
+    }
+
+    /**
+     * Stops the server
+     */
+    private void stopServer() {
+        Status s1 = status.getAndUpdate(s -> s.exit(true).accepting(null));
+        if (s1.accepting() != null) {
+            s1.accepting().dispose();
         }
     }
 
     /**
-     * Waits for capture interval
+     * The server status
+     * @param exit true if exit request
+     * @param accepting the disposable accepting
      */
-    private void waitCaptureInterval() {
-        logger.atDebug().log("Wait interval timeout");
-        if (exit) {
-            serverCompleted.onComplete();
-        } else {
-            Completable.timer(captureInterval, TimeUnit.MILLISECONDS)
-                    .subscribeOn(Schedulers.io())
-                    .doOnComplete(this::onCaptureInterval)
-                    .subscribe();
+    public record Status(boolean exit, Disposable accepting) {
+        public Status accepting(Disposable accepting) {
+            return !Objects.equals(this.accepting, accepting)
+                    ? new Status(exit, accepting)
+                    : this;
         }
-    }
 
-    /**
-     * Runs socket server
-     *
-     * @param serverPort the server port
-     */
-    private void runServer(int serverPort) {
-        try (ServerSocket serverSocket = new ServerSocket(serverPort)) {
-            while (!exit) {
-                // Waits for client access
-                Socket socket = serverSocket.accept();
-                info(ON_COLOR, "New client %s:%d",
-                        socket.getInetAddress().getCanonicalHostName(),
-                        socket.getPort());
-                Client cli = new Client(socket,
-                        new PrintWriter(socket.getOutputStream(), true)
-                );
-                // Add the list
-                this.clients.updateAndGet(list -> {
-                    List<Client> clients = new ArrayList<>(list);
-                    clients.add(cli);
-                    return clients;
-                });
-            }
-        } catch (IOException e) {
-            throw new RuntimeException(e);
+        public Status exit(boolean exit) {
+            return this.exit != exit
+                    ? new Status(exit, accepting)
+                    : this;
         }
-    }
-
-    /**
-     * Sends a line to all clients
-     *
-     * @param line the line
-     */
-    private void send(String line) {
-        // Clean up the client list
-        List<Client> clients = this.clients.updateAndGet(QRCode::cleanClients);
-        for (Client client : clients) {
-            Completable.complete()
-                    .observeOn(Schedulers.io())
-                    .doOnComplete(() ->
-                            client.out.println(line))
-                    .subscribe();
-        }
-    }
-
-    record Client(Socket socket, PrintWriter out) {
     }
 }
