@@ -12,20 +12,29 @@ properties:
   cameraUrl:
     type: string
   frameSize:
+    type: integer
     multipleOf: 1
     minimum: 0
     maximum: 13
   ledIntensity:
+    type: integer
     multipleOf: 1
     minimum: 0
     maximum: 255
   syncInterval:
+    type: integer
     multipleOf: 1
     minimum: 1
   captureInterval:
+    type: integer
+    multipleOf: 1
+    minimum: 1
+  retryInterval:
+    type: integer
     multipleOf: 1
     minimum: 1
   port:
+    type: integer
     multipleOf: 1
     minimum: 1
 required:

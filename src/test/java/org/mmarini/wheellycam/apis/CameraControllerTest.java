@@ -43,15 +43,18 @@ import static org.hamcrest.Matchers.matchesPattern;
 import static org.junit.jupiter.api.Assertions.*;
 
 class CameraControllerTest {
+    public static final int SCAN_INTERVAL = 800;
+    public static final int SYNCH_INTERVAL = 30000;
+    public static final int RETRY_INTERVAL = 3000;
     private CameraController cameraController;
 
     @Test
-    void captureQrcodeTest() throws IOException {
+    void captureQrcodeTest() {
         // Given ...
 
         // When ...
-        BufferedImage img = cameraController.captureImage();
-        CameraController.CameraEvent qrcode = cameraController.captureQrCode(img);
+        BufferedImage img = cameraController.captureImage().blockingGet();
+        CameraEvent qrcode = cameraController.captureQrCode(img);
 
         // Then ...
         assertNotNull(qrcode);
@@ -60,11 +63,11 @@ class CameraControllerTest {
     }
 
     @Test
-    void captureTest() throws IOException {
+    void captureTest() {
         // Given ...
 
         // When ...
-        BufferedImage img = cameraController.captureImage();
+        BufferedImage img = cameraController.captureImage().blockingGet();
         Mat image = cameraController.capture(img);
 
         // Then ...
@@ -82,7 +85,7 @@ class CameraControllerTest {
         // When ...
         boolean ctrl = cameraController.control("led_intensity", value);
         assertTrue(ctrl);
-        JsonNode status = cameraController.status();
+        JsonNode status = cameraController.status().blockingGet();
 
         // Then ...
         assertNotNull(status);
@@ -103,7 +106,7 @@ class CameraControllerTest {
     void setUp() {
         cameraController = CameraController.create(
                 "http://192.168.1.89",
-                255, CameraController.SIZE_320X240);
+                255, CameraController.SIZE_320X240, SCAN_INTERVAL, SYNCH_INTERVAL, RETRY_INTERVAL);
     }
 
     @Test
@@ -111,7 +114,7 @@ class CameraControllerTest {
         // Given ...
 
         // When ...
-        boolean ctrl = cameraController.sync();
+        boolean ctrl = cameraController.sendSync().blockingGet();
         assertTrue(ctrl);
     }
 

@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 - Issue [#11](https://github.com/m-marini/wheellycam/issues/11): Add GUI
 - Issue [#13](https://github.com/m-marini/wheellycam/issues/13): Add pause button
 
+### Changed
+ 
+- Issue [#16](https://github.com/m-marini/wheellycam/issues/16): Full reactive camera server
+
 ## [0.2.0] 2024-09-02
 
 ### Added
