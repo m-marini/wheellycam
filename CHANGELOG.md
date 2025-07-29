@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [0.3.0] 2025-07-29
+
 ### Added
 
 - Issue [#11](https://github.com/m-marini/wheellycam/issues/11): Add GUI
