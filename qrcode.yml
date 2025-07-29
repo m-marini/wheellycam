@@ -4,5 +4,5 @@ cameraUrl: http://192.168.1.89
 #ledIntensity: 1
 frameSize: 9
 #syncInterval: 30000
-captureInterval: 100
+captureInterval: 500
 #retryInterval: 3000

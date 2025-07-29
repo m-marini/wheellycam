@@ -29,9 +29,11 @@
 package org.mmarini.wheellycam.apps;
 
 import io.reactivex.Single;
+import io.reactivex.rxjava3.core.Completable;
 import io.reactivex.rxjava3.core.Flowable;
 import io.reactivex.rxjava3.disposables.Disposable;
 import io.reactivex.rxjava3.schedulers.Schedulers;
+import io.reactivex.rxjava3.subjects.CompletableSubject;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -39,6 +41,8 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.AsynchronousSocketChannel;
 import java.nio.charset.StandardCharsets;
+
+import static java.util.Objects.requireNonNull;
 
 /**
  * Handles the client comunication
@@ -58,6 +62,7 @@ public class CameraClient {
 
     private final AsynchronousSocketChannel socket;
     private Disposable eventSubscription;
+    private final CompletableSubject closed;
 
     /**
      * Creates the camera client
@@ -65,7 +70,8 @@ public class CameraClient {
      * @param socket the client socket
      */
     protected CameraClient(AsynchronousSocketChannel socket) {
-        this.socket = socket;
+        this.socket = requireNonNull(socket);
+        this.closed = CompletableSubject.create();
     }
 
     /**
@@ -80,6 +86,7 @@ public class CameraClient {
         } catch (IOException e) {
             logger.atError().setCause(e).log("Error closing client socket");
         }
+        closed.onComplete();
     }
 
     /**
@@ -90,6 +97,13 @@ public class CameraClient {
     private void onSendError(Throwable error) {
         logger.atError().setCause(error).log("Error sending data to client");
         close();
+    }
+
+    /**
+     * Returns the closed client
+     */
+    public Completable readClose() {
+        return closed;
     }
 
     /**
@@ -112,12 +126,16 @@ public class CameraClient {
      * @param text the line
      */
     private void sendText(String text) {
-        byte[] bytes = (text + "\r\n").getBytes(StandardCharsets.UTF_8);
-        ByteBuffer bfr = ByteBuffer.allocate(bytes.length);
-        bfr.put(bytes).flip();
-        Single.fromFuture(socket.write(bfr))
-                .subscribe(i ->
-                                logger.atDebug().log("Sent {} bytes", i),
-                        this::onSendError);
+        if (!socket.isOpen()) {
+            close();
+        } else {
+            byte[] bytes = (text + "\r\n").getBytes(StandardCharsets.UTF_8);
+            ByteBuffer bfr = ByteBuffer.allocate(bytes.length);
+            bfr.put(bytes).flip();
+            Single.fromFuture(socket.write(bfr))
+                    .subscribe(i -> {
+                            },
+                            this::onSendError);
+        }
     }
 }

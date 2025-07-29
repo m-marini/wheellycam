@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 ### Changed
  
 - Issue [#16](https://github.com/m-marini/wheellycam/issues/16): Full reactive camera server
+- Issue [#18](https://github.com/m-marini/wheellycam/issues/18): Improve monitoring
 
 ## [0.2.0] 2024-09-02
 

@@ -30,7 +30,9 @@ package org.mmarini.wheellycam.apis;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import io.reactivex.rxjava3.core.Completable;
+import io.reactivex.rxjava3.core.Flowable;
 import io.reactivex.rxjava3.core.Single;
+import io.reactivex.rxjava3.processors.BehaviorProcessor;
 import io.reactivex.rxjava3.processors.PublishProcessor;
 import io.reactivex.rxjava3.schedulers.Schedulers;
 import io.reactivex.rxjava3.subjects.CompletableSubject;
@@ -50,8 +52,11 @@ import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.Response;
 import java.awt.image.BufferedImage;
 import java.awt.image.DataBufferByte;
+import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URI;
+import java.net.URL;
+import java.net.URLConnection;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -76,6 +81,10 @@ public class CameraController {
     public static final int SIZE_1280X1024 = 12;
     public static final int SIZE_1600X1200 = 13;
     private static final Logger logger = LoggerFactory.getLogger(CameraController.class);
+    public static final String SYNCHRONIZING_CAMERA_STATE = "Synchronizing";
+    public static final String CAPTURING_IMAGE_STATE = "Capturing";
+    public static final String WAITING_FOR_CAPTURE_INTERVAL_STATE = "WaitingForCapture";
+    public static final String WAITING_FOR_CAMERA_SYNCHRONISATION_STATE = "WaitingForSync";
 
     static {
         System.loadLibrary("opencv_java4100");
@@ -84,23 +93,23 @@ public class CameraController {
     /**
      * Returns the CameraController
      *
-     * @param baseUrl       the base url of remote camera
-     * @param ledIntensity  the LED intensity (0...255)
-     * @param frameSize     the frame size
-     * @param scanInterval  the scan interval (ms)
-     * @param synchInterval the synchronisation interval (ms)
-     * @param retryInterval te retry interval (ms)
+     * @param baseUrl         the base url of remote camera
+     * @param ledIntensity    the LED intensity (0...255)
+     * @param frameSize       the frame size
+     * @param captureInterval the capture interval (ms)
+     * @param synchInterval   the synchronisation interval (ms)
+     * @param retryInterval   te retry interval (ms)
      */
     public static CameraController create(
             String baseUrl,
             int ledIntensity,
-            int frameSize, long scanInterval, long synchInterval, long retryInterval) {
+            int frameSize, long captureInterval, long synchInterval, long retryInterval) {
         Client client = ClientBuilder.newClient()
                 .register(RxFlowableInvokerProvider.class);
         WebTarget statusService = client.target(baseUrl + "/status");
         String captureUrl = baseUrl + "/capture";
         WebTarget ctrlService = client.target(baseUrl + "/control");
-        return new CameraController(statusService, ctrlService, captureUrl, ledIntensity, frameSize, scanInterval, synchInterval, retryInterval);
+        return new CameraController(statusService, ctrlService, captureUrl, ledIntensity, frameSize, captureInterval, synchInterval, retryInterval);
     }
 
     private final WebTarget statusService;
@@ -109,7 +118,8 @@ public class CameraController {
     private final int ledIntensity;
     private final int frameSize;
     private final PublishProcessor<CameraEvent> events;
-    private final long scanInterval;
+    private final BehaviorProcessor<String> states;
+    private final long captureInterval;
     private final long synchInterval;
     private final long retryInterval;
     private final AtomicReference<Status> status;
@@ -118,25 +128,28 @@ public class CameraController {
     /**
      * Creates the webcam controller
      *
-     * @param statusService  the status service
-     * @param controlService the control service
-     * @param captureUrl     the capture url
-     * @param ledIntensity   the LED intensity (0...255)
-     * @param frameSize      the frame size
-     * @param scanInterval   the scan interval (ms)
-     * @param synchInterval  the synchronisation interval (ms)
-     * @param retryInterval  the retry interval (ms)
+     * @param statusService   the status service
+     * @param controlService  the control service
+     * @param captureUrl      the capture url
+     * @param ledIntensity    the LED intensity (0...255)
+     * @param frameSize       the frame size
+     * @param captureInterval the capture interval (ms)
+     * @param synchInterval   the synchronisation interval (ms)
+     * @param retryInterval   the retry interval (ms)
      */
-    protected CameraController(WebTarget statusService, WebTarget controlService, String captureUrl, int ledIntensity, int frameSize, long scanInterval, long synchInterval, long retryInterval) {
+    protected CameraController(WebTarget statusService, WebTarget controlService, String captureUrl,
+                               int ledIntensity, int frameSize,
+                               long captureInterval, long synchInterval, long retryInterval) {
         this.statusService = statusService;
         this.controlService = controlService;
         this.captureUrl = captureUrl;
         this.ledIntensity = ledIntensity;
         this.frameSize = frameSize;
-        this.scanInterval = scanInterval;
+        this.captureInterval = captureInterval;
         this.synchInterval = synchInterval;
         this.retryInterval = retryInterval;
         this.events = PublishProcessor.create();
+        this.states = BehaviorProcessor.create();
         this.closed = CompletableSubject.create();
         this.status = new AtomicReference<>(new Status(false, false, false, 0));
     }
@@ -157,8 +170,13 @@ public class CameraController {
     Single<BufferedImage> captureImage() {
         return Single.fromSupplier(() -> {
                     logger.atDebug().log("Capturing image ...");
-                    BufferedImage img = ImageIO.read(URI.create(captureUrl + "?_cb=" + System.currentTimeMillis()).toURL());
-                    logger.atDebug().log("Captured image.");
+            URL url = URI.create(captureUrl + "?_cb=" + System.currentTimeMillis()).toURL();
+            URLConnection c = url.openConnection();
+            c.setConnectTimeout(1000);
+            c.connect();
+            InputStream in = c.getInputStream();
+            BufferedImage img = ImageIO.read(in);
+            logger.atDebug().log("Captured image.");
                     return img;
                 }
         );
@@ -184,13 +202,15 @@ public class CameraController {
             if (System.currentTimeMillis() >= status.get().lastSynch + synchInterval) {
                 sync();
             } else if (!s.pause()) {
+                states.onNext(CAPTURING_IMAGE_STATE);
                 captureImage()
                         .subscribeOn(Schedulers.io())
                         .map(this::captureQrCode)
                         .subscribe(this::onEvent,
                                 this::onEventError);
             } else {
-                Completable.timer(scanInterval, TimeUnit.MILLISECONDS)
+                states.onNext(WAITING_FOR_CAPTURE_INTERVAL_STATE);
+                Completable.timer(captureInterval, TimeUnit.MILLISECONDS, Schedulers.io())
                         .subscribe(this::capturing);
             }
         } else {
@@ -200,10 +220,37 @@ public class CameraController {
     }
 
     /**
+     * Closes the flows
+     */
+    private void closeFlows() {
+        states.onComplete();
+        events.onComplete();
+        closed.onComplete();
+    }
+
+    /**
      * Closes the controller
      */
     public void close() {
         status.updateAndGet(s -> s.closed(true));
+    }
+
+    /**
+     * Handles the camera event
+     *
+     * @param event the camer event
+     */
+    private void onEvent(CameraEvent event) {
+        events.onNext(event);
+        if (!status.get().closed()) {
+            logger.atDebug().log("Waiting scan interval ...");
+            states.onNext(WAITING_FOR_CAPTURE_INTERVAL_STATE);
+            Completable.timer(captureInterval, TimeUnit.MILLISECONDS, Schedulers.io())
+                    .subscribe(this::capturing);
+        } else {
+            events.onComplete();
+            closed.onComplete();
+        }
     }
 
     /**
@@ -222,21 +269,6 @@ public class CameraController {
     }
 
     /**
-     * Handles the camera event
-     *
-     * @param event the camer event
-     */
-    private void onEvent(CameraEvent event) {
-        events.onNext(event);
-        if (!status.get().closed()) {
-            Completable.timer(scanInterval, TimeUnit.MILLISECONDS)
-                    .subscribe(this::capturing);
-        } else {
-            events.onComplete();
-        }
-    }
-
-    /**
      * Handles the camera error
      *
      * @param error the error
@@ -244,10 +276,9 @@ public class CameraController {
     private void onEventError(Throwable error) {
         logger.atError().setCause(error).log("Error scanning image");
         if (!status.get().closed()) {
-            Completable.timer(retryInterval, TimeUnit.MILLISECONDS)
-                    .subscribe(this::sync);
+            sync();
         } else {
-            events.onComplete();
+            closeFlows();
         }
     }
 
@@ -259,14 +290,18 @@ public class CameraController {
     private void onSync(Boolean success) {
         if (!status.get().closed()) {
             if (success) {
+                logger.atDebug().log("Camera synchronised");
                 status.updateAndGet(s -> s.lastSynch(System.currentTimeMillis()));
                 capturing();
             } else {
-                Completable.timer(retryInterval, TimeUnit.MILLISECONDS)
+                logger.atDebug().log("Camera not synchronised");
+                logger.atDebug().log("Waiting retry ...");
+                states.onNext(WAITING_FOR_CAMERA_SYNCHRONISATION_STATE);
+                Completable.timer(retryInterval, TimeUnit.MILLISECONDS, Schedulers.io())
                         .subscribe(this::sync);
             }
         } else {
-            events.onComplete();
+            closeFlows();
         }
     }
 
@@ -278,11 +313,20 @@ public class CameraController {
     private void onSyncError(Throwable error) {
         logger.atError().setCause(error).log("Error synchronising");
         if (!status.get().closed()) {
-            Completable.timer(retryInterval, TimeUnit.MILLISECONDS)
+            logger.atDebug().log("Waiting retry ...");
+            states.onNext(WAITING_FOR_CAMERA_SYNCHRONISATION_STATE);
+            Completable.timer(retryInterval, TimeUnit.MILLISECONDS, Schedulers.io())
                     .subscribe(this::sync);
         } else {
-            events.onComplete();
+            closeFlows();
         }
+    }
+
+    /**
+     * Returns the state flow
+     */
+    public Flowable<String> readStates() {
+        return states;
     }
 
     /**
@@ -356,13 +400,15 @@ public class CameraController {
      */
     void sync() {
         if (!status.get().closed()) {
-            sendSync().subscribe(
-                    this::onSync,
-                    this::onSyncError
-            );
+            states.onNext(SYNCHRONIZING_CAMERA_STATE);
+            sendSync()
+                    .subscribeOn(Schedulers.io())
+                    .subscribe(
+                            this::onSync,
+                            this::onSyncError
+                    );
         } else {
-            events.onComplete();
-            closed.onComplete();
+            closeFlows();
         }
     }
 
