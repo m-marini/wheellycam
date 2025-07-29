@@ -73,13 +73,13 @@ public class QRCode {
     public static final Color QR_FRAME_COLOR = Color.WHITE;
     public static final Font QR_FONT = Font.decode(Font.DIALOG).deriveFont(20f);
     public static final BasicStroke QR_STROKE = new BasicStroke(3);
-    public static final Color OFF_COLOR = Color.RED;
     public static final Color ON_COLOR = Color.GREEN;
     public static final Color PAUSE_COLOR = Color.YELLOW;
     public static final int DEFAULT_LED_INTENSITY = 255;
     public static final int DEFAULT_CAPTURE_INTERVAL = 800;
     public static final int DEFAULT_RETRY_INTERVAL = 2400;
     public static final int DEFAULT_SYNC_INTERVAL = 30000;
+    public static final int MAXIMUM_CLIENT_NUMBER = 5;
     private static final String QRCODE_SCHEMA_YML = "https://mmarini.org/wheelly/qrcode-schema-0.1";
     private static final Logger logger = LoggerFactory.getLogger(QRCode.class);
 
@@ -125,14 +125,16 @@ public class QRCode {
     private final Namespace args;
     private final JFrame frame;
     private final JTextField statusText;
+    private final JProgressBar clientNumberBar;
     private final JLabel imageView;
-    private final JToggleButton pauseButton;
+    private final JToggleButton showButton;
     private final AtomicReference<Status> status;
     private CameraController cameraController;
     private AsynchronousServerSocketChannel serverSocket;
 
     /**
      * Create the camera server
+     *
      * @param args the arguments
      */
     public QRCode(Namespace args) {
@@ -140,13 +142,17 @@ public class QRCode {
         this.statusText = new JTextField();
         this.frame = new JFrame();
         this.imageView = new JLabel();
-        this.pauseButton = SwingUtils.createToggleButton("QRCode.pauseButton");
-        this.status = new AtomicReference<>(new Status(false, null));
+        this.clientNumberBar = new JProgressBar();
+        this.showButton = SwingUtils.createToggleButton("QRCode.showButton");
+        this.status = new AtomicReference<>(new Status(false, null, 0));
 
         statusText.setEditable(false);
         statusText.setColumns(80);
         statusText.setHorizontalAlignment(JTextField.CENTER);
         statusText.setBackground(Color.BLACK);
+
+        clientNumberBar.setStringPainted(true);
+        clientNumberBar.setMaximum(MAXIMUM_CLIENT_NUMBER);
 
         imageView.setPreferredSize(new Dimension(300, 300));
 
@@ -163,10 +169,12 @@ public class QRCode {
      * Creates content
      */
     private void createContent() {
+
         new GridLayoutHelper<>(frame.getContentPane()).modify("insets,2,2")
-                .modify("at,0,0 nofill weight,0,0 center").add(pauseButton)
-                .modify("at,0,1 nofill weight,1,1 center").add(imageView)
-                .modify("at,0,2 hfill weight,1,0").add(statusText);
+                .modify("at,0,0 nofill noweight center").add(showButton)
+                .modify("at,0,1 fill weight,1,1 center").add(imageView)
+                .modify("at,0,2 hfill noweight center").add(clientNumberBar)
+                .modify("at,0,3 hfill noweight center").add(statusText);
     }
 
     /**
@@ -183,7 +191,7 @@ public class QRCode {
                 logger.atInfo().log("Closing ...");
             }
         });
-        pauseButton.addActionListener(this::onPause);
+        showButton.addActionListener(this::onPause);
     }
 
     /**
@@ -202,13 +210,21 @@ public class QRCode {
 
     /**
      * Handle the acceptation of client socket
+     *
      * @param socket the socket
      */
     private void onAccept(AsynchronousSocketChannel socket) {
         Status s1 = status.updateAndGet(s -> s.accepting(null));
         if (!s1.exit()) {
             try {
+                Status s = status.updateAndGet(Status::addClient);
+                showClientNumber(s.clientNumber);
                 CameraClient cli = CameraClient.create(socket);
+                cli.readClose()
+                        .subscribe(() -> {
+                            Status s2 = status.updateAndGet(Status::removeClient);
+                            showClientNumber(s2.clientNumber);
+                        });
                 Flowable<String> textFlow = cameraController.readCamera()
                         .map(CameraEvent::line);
                 cli.sendLines(textFlow);
@@ -271,7 +287,6 @@ public class QRCode {
             gr.draw(poly);
         }
         imageView.setIcon(new ImageIcon(img));
-        info(ON_COLOR, "%s", event.line());
     }
 
     /**
@@ -280,14 +295,17 @@ public class QRCode {
      * @param actionEvent the event
      */
     private void onPause(ActionEvent actionEvent) {
-        cameraController.pause(pauseButton.isSelected());
+        if (showButton.isSelected()) {
+            cameraController.pause(false);
+        } else {
+            cameraController.pause(status.get().clientNumber == 0);
+        }
     }
 
     /**
      * Runs the application
      */
     private void run() throws IOException {
-        info(OFF_COLOR, "Running %s", QRCode.class.getName());
         JsonNode config = fromFile(args.getString("config"));
         JsonSchemas.instance().validateOrThrow(config, QRCODE_SCHEMA_YML);
         String url = Locator.locate("cameraUrl").getNode(config).asText();
@@ -302,20 +320,40 @@ public class QRCode {
                 .bind(new InetSocketAddress(serverPort));
 
         // Creates the camera controller
-        this.cameraController = CameraController.create(url, ledIntensity, frameSize, retryInterval, syncInterval, captureInterval);
+        this.cameraController = CameraController.create(url, ledIntensity, frameSize, captureInterval, syncInterval, retryInterval);
         cameraController.readCamera()
                 .subscribeOn(Schedulers.io())
                 .subscribe(this::onCameraEvent,
                         this::onCameraError);
-
+        cameraController.readStates()
+                .subscribe(state -> info(
+                        status.get().clientNumber == 0 ? PAUSE_COLOR : ON_COLOR,
+                        state));
 
         frame.setVisible(true);
         Utils.center(frame);
 
+        showClientNumber(0);
+        cameraController.pause(true);
         cameraController.start();
         startServer();
         cameraController.readClosed().blockingAwait();
         logger.atInfo().log("Controller closed");
+    }
+
+    /**
+     * Shows the number of clients
+     *
+     * @param n the number of clients
+     */
+    private void showClientNumber(int n) {
+        clientNumberBar.setValue(n);
+        clientNumberBar.setString(format(Messages.getString("QRCode.numberOfClient"), n));
+        if (showButton.isSelected()) {
+            cameraController.pause(false);
+        } else {
+            cameraController.pause(n == 0);
+        }
     }
 
     /**
@@ -341,19 +379,31 @@ public class QRCode {
 
     /**
      * The server status
-     * @param exit true if exit request
-     * @param accepting the disposable accepting
+     *
+     * @param exit         true if exit request
+     * @param accepting    the disposable accepting
+     * @param clientNumber
      */
-    public record Status(boolean exit, Disposable accepting) {
+    public record Status(boolean exit, Disposable accepting, int clientNumber) {
         public Status accepting(Disposable accepting) {
             return !Objects.equals(this.accepting, accepting)
-                    ? new Status(exit, accepting)
+                    ? new Status(exit, accepting, clientNumber)
                     : this;
+        }
+
+        public Status addClient() {
+            return new Status(exit, accepting, clientNumber + 1);
         }
 
         public Status exit(boolean exit) {
             return this.exit != exit
-                    ? new Status(exit, accepting)
+                    ? new Status(exit, accepting, clientNumber)
+                    : this;
+        }
+
+        public Status removeClient() {
+            return clientNumber > 0
+                    ? new Status(exit, accepting, clientNumber - 1)
                     : this;
         }
     }
