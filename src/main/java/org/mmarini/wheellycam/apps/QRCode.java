@@ -80,8 +80,9 @@ public class QRCode {
     public static final int DEFAULT_RETRY_INTERVAL = 2400;
     public static final int DEFAULT_SYNC_INTERVAL = 30000;
     public static final int MAXIMUM_CLIENT_NUMBER = 5;
-    private static final String QRCODE_SCHEMA_YML = "https://mmarini.org/wheelly/qrcode-schema-0.1";
+    public static final int DEFAULT_ALIVE_INTERVAL = 5000;
     private static final Logger logger = LoggerFactory.getLogger(QRCode.class);
+    private static final String QRCODE_SCHEMA_YML = "https://mmarini.org/wheelly/qrcode-schema-0.2";
 
     static {
         System.loadLibrary(Core.NATIVE_LIBRARY_NAME);
@@ -131,6 +132,7 @@ public class QRCode {
     private final AtomicReference<Status> status;
     private CameraController cameraController;
     private AsynchronousServerSocketChannel serverSocket;
+    private long aliveInterval;
 
     /**
      * Create the camera server
@@ -219,7 +221,7 @@ public class QRCode {
             try {
                 Status s = status.updateAndGet(Status::addClient);
                 showClientNumber(s.clientNumber);
-                CameraClient cli = CameraClient.create(socket);
+                CameraClient cli = CameraClient.create(socket, aliveInterval);
                 cli.readClose()
                         .subscribe(() -> {
                             Status s2 = status.updateAndGet(Status::removeClient);
@@ -228,6 +230,7 @@ public class QRCode {
                 Flowable<String> textFlow = cameraController.readCamera()
                         .map(CameraEvent::line);
                 cli.sendLines(textFlow);
+                cli.sendAlive();
             } catch (IOException e) {
                 logger.atError().setCause(e).log("Error creating client");
                 try {
@@ -315,6 +318,7 @@ public class QRCode {
         long syncInterval = Locator.locate("syncInterval").getNode(config).asLong(DEFAULT_SYNC_INTERVAL);
         int frameSize = Locator.locate("frameSize").getNode(config).asInt(CameraController.SIZE_320X240);
         int serverPort = Locator.locate("port").getNode(config).asInt(8100);
+        this.aliveInterval = Locator.locate("aliveInterval").getNode(config).asLong(DEFAULT_ALIVE_INTERVAL);
         // Creates the server socket
         this.serverSocket = AsynchronousServerSocketChannel.open()
                 .bind(new InetSocketAddress(serverPort));

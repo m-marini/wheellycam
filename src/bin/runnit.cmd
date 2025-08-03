@@ -10,9 +10,8 @@ java -version > nul
 IF ERRORLEVEL 2 goto noJavaw
 javaw > nul
 IF ERRORLEVEL 2 goto noJavaw
-
+cd ..
 java -cp ${opencv.jarFile};lib/${pom.build.finalName}.jar ${jar.mainClass} %1 %2
-
 goto end
 
 :noJavaw
