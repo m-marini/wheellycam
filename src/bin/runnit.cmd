@@ -10,8 +10,8 @@ java -version > nul
 IF ERRORLEVEL 2 goto noJavaw
 javaw > nul
 IF ERRORLEVEL 2 goto noJavaw
-
-java -cp ${opencv.jarFile};lib/${pom.build.finalName}.jar ${jar.mainClass} %1 %2
+cd ..
+java -cp C:/opencv/build/java/opencv-4100.jar;lib/wheellycam-0.3.0.jar org.mmarini.wheellycam.apps.QRCode %1 %2
 
 goto end
 

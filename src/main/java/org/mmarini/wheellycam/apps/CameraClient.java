@@ -41,11 +41,12 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.AsynchronousSocketChannel;
 import java.nio.charset.StandardCharsets;
+import java.util.concurrent.TimeUnit;
 
 import static java.util.Objects.requireNonNull;
 
 /**
- * Handles the client comunication
+ * Handles the client communication
  */
 public class CameraClient {
     private static final Logger logger = LoggerFactory.getLogger(CameraClient.class);
@@ -53,24 +54,28 @@ public class CameraClient {
     /**
      * Returns the camera client
      *
-     * @param socket the client socket
+     * @param socket         the client socket
+     * @param aliveInterval the alive interval (ms)
      * @throws IOException in case of error
      */
-    public static CameraClient create(AsynchronousSocketChannel socket) throws IOException {
-        return new CameraClient(socket);
+    public static CameraClient create(AsynchronousSocketChannel socket, long aliveInterval) throws IOException {
+        return new CameraClient(socket, aliveInterval);
     }
 
     private final AsynchronousSocketChannel socket;
     private Disposable eventSubscription;
     private final CompletableSubject closed;
+    private final long aliveInterval;
 
     /**
      * Creates the camera client
      *
-     * @param socket the client socket
+     * @param socket        the client socket
+     * @param aliveInterval the alive interval (ms)
      */
-    protected CameraClient(AsynchronousSocketChannel socket) {
+    protected CameraClient(AsynchronousSocketChannel socket, long aliveInterval) {
         this.socket = requireNonNull(socket);
+        this.aliveInterval = aliveInterval;
         this.closed = CompletableSubject.create();
     }
 
@@ -137,5 +142,11 @@ public class CameraClient {
                             },
                             this::onSendError);
         }
+    }
+
+    public void sendAlive() {
+        sendText("// alive");
+        Completable.timer(aliveInterval, TimeUnit.MILLISECONDS, Schedulers.io())
+                .subscribe(this::sendAlive);
     }
 }
