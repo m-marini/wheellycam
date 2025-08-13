@@ -7,8 +7,10 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [0.3.1] 2025-08-13
+
 ### Added
-- 
+
 - Issue [#21](https://github.com/m-marini/wheellycam/issues/21): Add alive interval
 
 ## [0.3.0] 2025-07-29
