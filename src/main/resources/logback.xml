@@ -12,8 +12,8 @@
     </appender>
 
     <logger name="org.mmarini" level="INFO"/>
-    <logger name="org.mmarini.wheellycam.apis.CameraController" level="DEBUG"/>
-    <logger name="org.mmarini.wheellycam.apps.QRCode" level="DEBUG"/>
+    <logger name="org.mmarini.wheellycam.apis.QRReader" level="INFO"/>
+    <logger name="org.mmarini.wheellycam.apps.QRCode" level="INFO"/>
 
     <root level="INFO">
         <appender-ref ref="STDOUT"/>

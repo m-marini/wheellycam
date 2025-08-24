@@ -6,7 +6,7 @@
 
     <groupId>org.mmarini</groupId>
     <artifactId>wheellycam</artifactId>
-    <version>0.3.1</version>
+    <version>0.4.0</version>
     <name>wheellycam</name>
     <description>Wheelly Camera Server</description>
 
@@ -21,6 +21,7 @@
         <opencv.jarFile>C:/opencv/build/java/opencv-4100.jar</opencv.jarFile>
         <rxjava.version>3.0.0-RC2</rxjava.version>
         <jackson.version>2.12.5</jackson.version>
+        <mqtt.version>1.2.5</mqtt.version>
         <!--
         <opencv.jarFile>/opencv/build/java/opencv-4100.jar</opencv.jarFile>
         -->
@@ -154,6 +155,12 @@
             <version>${opencv.version}</version>
             <scope>system</scope>
             <systemPath>${opencv.jarFile}</systemPath>
+        </dependency>
+
+        <dependency>
+            <groupId>org.eclipse.paho</groupId>
+            <artifactId>org.eclipse.paho.client.mqttv3</artifactId>
+            <version>${mqtt.version}</version>
         </dependency>
 
         <!--
