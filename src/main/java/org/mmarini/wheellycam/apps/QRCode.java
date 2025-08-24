@@ -29,19 +29,23 @@
 package org.mmarini.wheellycam.apps;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import io.reactivex.rxjava3.core.Flowable;
-import io.reactivex.rxjava3.core.Single;
-import io.reactivex.rxjava3.disposables.Disposable;
+import io.reactivex.rxjava3.core.Completable;
 import io.reactivex.rxjava3.schedulers.Schedulers;
 import net.sourceforge.argparse4j.ArgumentParsers;
 import net.sourceforge.argparse4j.impl.Arguments;
 import net.sourceforge.argparse4j.inf.ArgumentParser;
 import net.sourceforge.argparse4j.inf.ArgumentParserException;
 import net.sourceforge.argparse4j.inf.Namespace;
+import org.eclipse.paho.client.mqttv3.MqttException;
+import org.eclipse.paho.client.mqttv3.MqttMessage;
 import org.mmarini.swing.GridLayoutHelper;
 import org.mmarini.swing.SwingUtils;
-import org.mmarini.wheellycam.apis.CameraController;
+import org.mmarini.wheelly.mqtt.Device;
+import org.mmarini.wheelly.mqtt.RemoteDevice;
+import org.mmarini.wheelly.mqtt.RxMqttClient;
+import org.mmarini.wheelly.mqtt.StringCommand;
 import org.mmarini.wheellycam.apis.CameraEvent;
+import org.mmarini.wheellycam.apis.QRReader;
 import org.mmarini.wheellycam.swing.Utils;
 import org.mmarini.yaml.Locator;
 import org.opencv.core.Core;
@@ -49,17 +53,18 @@ import org.opencv.core.Mat;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import javax.imageio.ImageIO;
 import javax.swing.*;
 import java.awt.*;
 import java.awt.event.ActionEvent;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.awt.image.BufferedImage;
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
-import java.net.InetSocketAddress;
-import java.nio.channels.AsynchronousServerSocketChannel;
-import java.nio.channels.AsynchronousSocketChannel;
-import java.util.Objects;
+import java.io.InputStream;
+import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static java.lang.Math.round;
@@ -73,17 +78,21 @@ public class QRCode {
     public static final Color QR_FRAME_COLOR = Color.WHITE;
     public static final Font QR_FONT = Font.decode(Font.DIALOG).deriveFont(20f);
     public static final BasicStroke QR_STROKE = new BasicStroke(3);
-    public static final Color ON_COLOR = Color.GREEN;
-    public static final Color PAUSE_COLOR = Color.YELLOW;
-    public static final int DEFAULT_LED_INTENSITY = 255;
-    public static final int DEFAULT_CAPTURE_INTERVAL = 800;
-    public static final int DEFAULT_RETRY_INTERVAL = 2400;
-    public static final int DEFAULT_SYNC_INTERVAL = 30000;
-    public static final int MAXIMUM_CLIENT_NUMBER = 5;
-    public static final int DEFAULT_ALIVE_INTERVAL = 5000;
+    public static final String DEFAULT_BROKER_URL = "tcp://localhost:1883";
+    public static final long DEFAULT_RETRY_INTERVAL = 3000L;
+    public static final String DEFAULT_DEVICE_NAME = "wheellyqr";
+    public static final String DEFAULT_DEVICE_VERSION = "v0";
+    public static final String DEFAULT_CAMERA_NAME = "wheellycam";
+    public static final String DEFAULT_CAMERA_VERSION = "v0";
     private static final Logger logger = LoggerFactory.getLogger(QRCode.class);
-    private static final String QRCODE_SCHEMA_YML = "https://mmarini.org/wheelly/qrcode-schema-0.2";
+    private static final String QRCODE_SCHEMA_YML = "https://mmarini.org/wheelly/qrcode-schema-0.3";
+    private static final Color ERROR_COLOR = Color.RED;
+    private static final Color SUCCESS_COLOR = Color.GREEN;
+    public static final int COMMAND_TIMEOUT = 3000;
 
+    /*
+     * Load the native library of opencv
+     */
     static {
         System.loadLibrary(Core.NATIVE_LIBRARY_NAME);
     }
@@ -103,6 +112,16 @@ public class QRCode {
                 .action(Arguments.version())
                 .help("show current version");
         return parser;
+    }
+
+    /**
+     * Returns the device id by computer name and main class
+     */
+    private static String generateDeviceId() {
+        String domainName = System.getenv("COMPUTERNAME") + QRCode.class.getCanonicalName();
+        UUID uuid = UUID.nameUUIDFromBytes(domainName.getBytes());
+        long lsb = uuid.getLeastSignificantBits();
+        return format("%012x", lsb & 0xffffffffffffL);
     }
 
     /**
@@ -126,13 +145,14 @@ public class QRCode {
     private final Namespace args;
     private final JFrame frame;
     private final JTextField statusText;
-    private final JProgressBar clientNumberBar;
+    private final JTextField deviceField;
     private final JLabel imageView;
-    private final JToggleButton showButton;
+    private final JButton captureButton;
     private final AtomicReference<Status> status;
-    private CameraController cameraController;
-    private AsynchronousServerSocketChannel serverSocket;
-    private long aliveInterval;
+    private RxMqttClient mqttClient;
+    private long retryInterval;
+    private Device qrDevice;
+    private RemoteDevice cameraDevice;
 
     /**
      * Create the camera server
@@ -142,19 +162,20 @@ public class QRCode {
     public QRCode(Namespace args) {
         this.args = args;
         this.statusText = new JTextField();
+        this.deviceField = new JTextField();
         this.frame = new JFrame();
         this.imageView = new JLabel();
-        this.clientNumberBar = new JProgressBar();
-        this.showButton = SwingUtils.createToggleButton("QRCode.showButton");
-        this.status = new AtomicReference<>(new Status(false, null, 0));
+        this.captureButton = SwingUtils.createButton("QRCode.captureButton");
+        this.status = new AtomicReference<>(new Status(false));
 
         statusText.setEditable(false);
         statusText.setColumns(80);
         statusText.setHorizontalAlignment(JTextField.CENTER);
         statusText.setBackground(Color.BLACK);
 
-        clientNumberBar.setStringPainted(true);
-        clientNumberBar.setMaximum(MAXIMUM_CLIENT_NUMBER);
+        deviceField.setEditable(false);
+        deviceField.setColumns(20);
+        deviceField.setHorizontalAlignment(JTextField.LEFT);
 
         imageView.setPreferredSize(new Dimension(300, 300));
 
@@ -168,32 +189,28 @@ public class QRCode {
     }
 
     /**
-     * Creates content
+     * Close mqtt client
      */
-    private void createContent() {
-
-        new GridLayoutHelper<>(frame.getContentPane()).modify("insets,2,2")
-                .modify("at,0,0 nofill noweight center").add(showButton)
-                .modify("at,0,1 fill weight,1,1 center").add(imageView)
-                .modify("at,0,2 hfill noweight center").add(clientNumberBar)
-                .modify("at,0,3 hfill noweight center").add(statusText);
+    private void closeMqttClient() {
+        logger.atInfo().log("Closing mqtt client ...");
+        try {
+            mqttClient.close();
+        } catch (MqttException e) {
+            logger.atError().setCause(e).log("Error closing mqtt client");
+        }
+        logger.atInfo().log("Mqtt client closed");
     }
 
     /**
-     * Creates control flows
+     * Creates content
      */
-    private void createFlow() {
-        frame.addWindowListener(new WindowAdapter() {
-            @Override
-            public void windowClosed(WindowEvent e) {
-                if (cameraController != null) {
-                    cameraController.close();
-                }
-                stopServer();
-                logger.atInfo().log("Closing ...");
-            }
-        });
-        showButton.addActionListener(this::onPause);
+    private void createContent() {
+        new GridLayoutHelper<>(frame.getContentPane()).modify("insets,2,2")
+                .modify("at,0,0").add("Device")
+                .modify("at,1,0 hw,1 fill e").add(deviceField)
+                .modify("at,2,0 noweight nofill center").add(captureButton)
+                .modify("at,0,1 hspan,3 fill weight,1,1 center").add(new JScrollPane(imageView))
+                .modify("at,0,2 hspan,3 hfill noweight center").add(statusText);
     }
 
     /**
@@ -211,58 +228,49 @@ public class QRCode {
     }
 
     /**
-     * Handle the acceptation of client socket
-     *
-     * @param socket the socket
+     * Connects mqtt client
      */
-    private void onAccept(AsynchronousSocketChannel socket) {
-        Status s1 = status.updateAndGet(s -> s.accepting(null));
-        if (!s1.exit()) {
+    private void mqttConnect() {
+        if (!status.get().exit) {
+            logger.atInfo().log("Starting mqtt client ...");
             try {
-                Status s = status.updateAndGet(Status::addClient);
-                showClientNumber(s.clientNumber);
-                CameraClient cli = CameraClient.create(socket, aliveInterval);
-                cli.readClose()
-                        .subscribe(() -> {
-                            Status s2 = status.updateAndGet(Status::removeClient);
-                            showClientNumber(s2.clientNumber);
-                        });
-                Flowable<String> textFlow = cameraController.readCamera()
-                        .map(CameraEvent::line);
-                cli.sendLines(textFlow);
-                cli.sendAlive();
-            } catch (IOException e) {
-                logger.atError().setCause(e).log("Error creating client");
-                try {
-                    socket.close();
-                } catch (IOException e1) {
-                    logger.atError().setCause(e1).log("Error closing client socket");
-                }
+                mqttClient.connect().subscribe(this::onMqttConnected,
+                        this::onMqttConnectionError);
+            } catch (MqttException e) {
+                onMqttConnectionError(e);
             }
-            startServer();
         }
     }
 
     /**
-     * Handles the acceptance error
-     *
-     * @param error the error
+     * Creates control flows
      */
-    private void onAcceptError(Throwable error) {
-        Status s1 = status.updateAndGet(s -> s.accepting(null));
-        logger.atError().setCause(error).log("Error accepting client");
-        if (!s1.exit()) {
-            startServer();
-        }
+    private void createFlow() {
+        frame.addWindowListener(new WindowAdapter() {
+            @Override
+            public void windowClosed(WindowEvent e) {
+                logger.atInfo().log("Closing ...");
+                status.updateAndGet(status1 -> status1.exit(true));
+                closeMqttClient();
+            }
+        });
+        captureButton.addActionListener(this::onCaptureButton);
     }
 
     /**
-     * Handles the camera error
+     * Returns the image from mqtt message
      *
-     * @param error the error
+     * @param message the message
      */
-    private void onCameraError(Throwable error) {
-        logger.atError().setCause(error).log("Error reading camera event");
+    private BufferedImage message2Image(MqttMessage message) {
+        InputStream in = new ByteArrayInputStream(message.getPayload());
+        try {
+            return ImageIO.read(in);
+        } catch (IOException e) {
+            logger.atError().setCause(e).log("Error getting camera");
+            info(ERROR_COLOR, "Error getting camera");
+            return null;
+        }
     }
 
     /**
@@ -290,125 +298,101 @@ public class QRCode {
             gr.draw(poly);
         }
         imageView.setIcon(new ImageIcon(img));
+        qrDevice.publishData("qr", event.line());
+        info(SUCCESS_COLOR, "Image captured QRCODE=" + event.qrcode());
+    }
+
+    private void onCaptureButton(ActionEvent actionEvent) {
+        cameraDevice.execute(StringCommand.create("ca", ""), COMMAND_TIMEOUT)
+                .subscribe(x -> {
+                        },
+                        this::onCaptureError);
+    }
+
+    private void onCaptureError(Throwable error) {
+        logger.atError().setCause(error).log("Error capturing image");
+        info(ERROR_COLOR, "Error capturing image");
+    }
+
+    private void onImage(BufferedImage image) {
+        CameraEvent event = QRReader.captureQrCode(image);
+        onCameraEvent(event);
     }
 
     /**
-     * Handles the pause button
+     * Handles on mqtt connection event
      *
-     * @param actionEvent the event
+     * @param connected true if connected
      */
-    private void onPause(ActionEvent actionEvent) {
-        if (showButton.isSelected()) {
-            cameraController.pause(false);
-        } else {
-            cameraController.pause(status.get().clientNumber == 0);
+    private void onMqttConnected(boolean connected) {
+        logger.atInfo().log("Mqtt client connected");
+        logger.atInfo().log("Subscribing mqtt topic ...");
+        try {
+            qrDevice.subscribe();
+            qrDevice.publishData("hi", "");
+            logger.atInfo().log("Device {} subscribed", qrDevice.subCommandTopic());
+        } catch (MqttException e) {
+            logger.atError().setCause(e).log("Error subscribing device");
+            info(ERROR_COLOR, "Error subscribing topic");
         }
+    }
+
+    /**
+     * Handles the mqtt client connection error
+     *
+     * @param error the error
+     */
+    private void onMqttConnectionError(Throwable error) {
+        logger.atError().setCause(error).log("Error connecting mqtt client");
+        Completable.timer(retryInterval, TimeUnit.MILLISECONDS, Schedulers.computation())
+                .subscribe(this::mqttConnect);
     }
 
     /**
      * Runs the application
      */
-    private void run() throws IOException {
+    private void run() throws IOException, MqttException {
         JsonNode config = fromFile(args.getString("config"));
         JsonSchemas.instance().validateOrThrow(config, QRCODE_SCHEMA_YML);
-        String url = Locator.locate("cameraUrl").getNode(config).asText();
-        int ledIntensity = Locator.locate("ledIntensity").getNode(config).asInt(DEFAULT_LED_INTENSITY);
-        long captureInterval = Locator.locate("captureInterval").getNode(config).asLong(DEFAULT_CAPTURE_INTERVAL);
-        long retryInterval = Locator.locate("retryInterval").getNode(config).asLong(DEFAULT_RETRY_INTERVAL);
-        long syncInterval = Locator.locate("syncInterval").getNode(config).asLong(DEFAULT_SYNC_INTERVAL);
-        int frameSize = Locator.locate("frameSize").getNode(config).asInt(CameraController.SIZE_320X240);
-        int serverPort = Locator.locate("port").getNode(config).asInt(8100);
-        this.aliveInterval = Locator.locate("aliveInterval").getNode(config).asLong(DEFAULT_ALIVE_INTERVAL);
-        // Creates the server socket
-        this.serverSocket = AsynchronousServerSocketChannel.open()
-                .bind(new InetSocketAddress(serverPort));
 
-        // Creates the camera controller
-        this.cameraController = CameraController.create(url, ledIntensity, frameSize, captureInterval, syncInterval, retryInterval);
-        cameraController.readCamera()
-                .subscribeOn(Schedulers.io())
-                .subscribe(this::onCameraEvent,
-                        this::onCameraError);
-        cameraController.readStates()
-                .subscribe(state -> info(
-                        status.get().clientNumber == 0 ? PAUSE_COLOR : ON_COLOR,
-                        state));
+        // Creates mqtt client
+        String serverUrl = Locator.locate("brokerUrl").getNode(config).asText(DEFAULT_BROKER_URL);
+        String userName = Locator.locate("mqttUser").getNode(config).asText();
+        String password = Locator.locate("mqttPassword").getNode(config).asText();
+        String deviceId = Locator.locate("deviceId").getNode(config).asText(generateDeviceId());
+        String deviceName = Locator.locate("deviceName").getNode(config).asText(DEFAULT_DEVICE_NAME);
+        String deviceVersion = Locator.locate("deviceVersion").getNode(config).asText(DEFAULT_DEVICE_VERSION);
+        this.retryInterval = Locator.locate("retryInterval").getNode(config).asLong(DEFAULT_RETRY_INTERVAL);
+        this.mqttClient = RxMqttClient.create(serverUrl, null, userName, password);
+        this.qrDevice = new Device(deviceName, deviceId, deviceVersion, mqttClient);
+
+        String cameraId = Locator.locate("cameraId").getNode(config).asText();
+        String cameraName = Locator.locate("deviceName").getNode(config).asText(DEFAULT_CAMERA_NAME);
+        String cameraVersion = Locator.locate("deviceVersion").getNode(config).asText(DEFAULT_CAMERA_VERSION);
+        this.cameraDevice = new RemoteDevice(cameraName, cameraId, cameraVersion, mqttClient);
+
+        deviceField.setText(deviceName + "/" + deviceId + "/" + deviceVersion);
+        cameraDevice.readData("img", this::message2Image)
+                .subscribe(this::onImage);
 
         frame.setVisible(true);
         Utils.center(frame);
 
-        showClientNumber(0);
-        cameraController.pause(true);
-        cameraController.start();
-        startServer();
-        cameraController.readClosed().blockingAwait();
-        logger.atInfo().log("Controller closed");
-    }
-
-    /**
-     * Shows the number of clients
-     *
-     * @param n the number of clients
-     */
-    private void showClientNumber(int n) {
-        clientNumberBar.setValue(n);
-        clientNumberBar.setString(format(Messages.getString("QRCode.numberOfClient"), n));
-        if (showButton.isSelected()) {
-            cameraController.pause(false);
-        } else {
-            cameraController.pause(n == 0);
-        }
-    }
-
-    /**
-     * Starts server
-     */
-    private void startServer() {
-        Disposable accepting = Single.fromFuture(serverSocket.accept())
-                .subscribeOn(Schedulers.io())
-                .subscribe(this::onAccept,
-                        this::onAcceptError);
-        status.updateAndGet(s -> s.accepting(accepting));
-    }
-
-    /**
-     * Stops the server
-     */
-    private void stopServer() {
-        Status s1 = status.getAndUpdate(s -> s.exit(true).accepting(null));
-        if (s1.accepting() != null) {
-            s1.accepting().dispose();
-        }
+        mqttConnect();
     }
 
     /**
      * The server status
      *
-     * @param exit         true if exit request
-     * @param accepting    the disposable accepting
-     * @param clientNumber
+     * @param exit
      */
-    public record Status(boolean exit, Disposable accepting, int clientNumber) {
-        public Status accepting(Disposable accepting) {
-            return !Objects.equals(this.accepting, accepting)
-                    ? new Status(exit, accepting, clientNumber)
-                    : this;
-        }
-
-        public Status addClient() {
-            return new Status(exit, accepting, clientNumber + 1);
-        }
+    public record Status(boolean exit) {
 
         public Status exit(boolean exit) {
             return this.exit != exit
-                    ? new Status(exit, accepting, clientNumber)
+                    ? new Status(true)
                     : this;
         }
 
-        public Status removeClient() {
-            return clientNumber > 0
-                    ? new Status(exit, accepting, clientNumber - 1)
-                    : this;
-        }
     }
 }

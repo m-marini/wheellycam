@@ -57,10 +57,10 @@ public record CameraEvent(long timestamp, String qrcode, int width, int height, 
      */
     private static String qrCode2String(long timestamp, String qrcode, int width, int height, Mat points) {
         return qrcode.isEmpty()
-                ? format(Locale.ENGLISH, "qr %d ? %d %d 0 0 0 0 0 0 0 0",
+                ? format(Locale.ENGLISH, "%d,?,%d,%d,0,0,0,0,0,0,0,0",
                 timestamp,
                 width, height)
-                : format(Locale.ENGLISH, "qr %d %s %d %d %.1f %.1f %.1f %.1f %.1f %.1f %.1f %.1f",
+                : format(Locale.ENGLISH, "%d,%s,%d,%d,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f",
                 timestamp,
                 qrcode,
                 width, height,

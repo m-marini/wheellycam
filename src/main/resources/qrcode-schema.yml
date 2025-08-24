@@ -1,6 +1,6 @@
 ---
 $schema: https://json-schema.org/draft/2020-12/schema
-$id: https://mmarini.org/wheelly/qrcode-schema-0.2
+$id: https://mmarini.org/wheelly/qrcode-schema-0.3
 title: Wheelly camera schema
 
 # qrcode schema
@@ -8,39 +8,30 @@ type: object
 properties:
   $schema:
     type: string
-    const: https://mmarini.org/wheelly/qrcode-schema-0.2
-  cameraUrl:
-    type: string
-  frameSize:
-    type: integer
-    multipleOf: 1
-    minimum: 0
-    maximum: 13
-  ledIntensity:
-    type: integer
-    multipleOf: 1
-    minimum: 0
-    maximum: 255
-  syncInterval:
-    type: integer
-    multipleOf: 1
-    minimum: 1
-  captureInterval:
-    type: integer
-    multipleOf: 1
-    minimum: 1
+    const: https://mmarini.org/wheelly/qrcode-schema-0.3
   retryInterval:
     type: integer
-    multipleOf: 1
     minimum: 1
-  aliveInterval:
-    type: integer
-    multipleOf: 1
-    minimum: 1
-  port:
-    type: integer
-    multipleOf: 1
-    minimum: 1
+  brokerUrl:
+    type: string
+  mqttUser:
+    type: string
+  mqttPassword:
+    type: string
+  deviceId:
+    type: string
+  deviceName:
+    type: string
+  deviceVersion:
+    type: string
+  cameraId:
+    type: string
+  cameraName:
+    type: string
+  cameraVersion:
+    type: string
 required:
   - $schema
-  - cameraUrl
+  - mqttUser
+  - mqttPassword
+  - cameraId
