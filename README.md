@@ -2,6 +2,10 @@ The repository contain the code for the qrcode recogntion from Wheelly camera
 
 See https://github.com/m-marini/wheellyj
 
+## Release 0.4.0
+
+- Add MQTT architecture
+
 ## Release 0.3.1
 
 - Add alive interval
