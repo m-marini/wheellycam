@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 Marco Marini, marco.marini@mmarini.org
+ * Copyright (c) 2025-2026 Marco Marini, marco.marini@mmarini.org
  *
  *  Permission is hereby granted, free of charge, to any person
  * obtaining a copy of this software and associated documentation
@@ -110,10 +110,10 @@ public class RemoteDevice {
         Maybe<R> reply = replyConnectable.firstElement()
                 .timeout(timeout, TimeUnit.MILLISECONDS)
                 .flatMap(t -> {
-                    if (t._1.equals(errorTopic)) {
-                        return Maybe.error(new DeviceException(new String(t._2.getPayload())));
+                    if (t._1().equals(errorTopic)) {
+                        return Maybe.error(new DeviceException(new String(t._2().getPayload())));
                     }
-                    R response = command.response(t._2);
+                    R response = command.response(t._2());
                     return response != null
                             ? Maybe.just(response)
                             : Maybe.empty();
@@ -167,8 +167,8 @@ public class RemoteDevice {
                             : Flowable.empty();
                 })
                 .flatMap(t -> {
-                    logger.atDebug().log("Data {}", t._2);
-                    T result = factory.apply(t._2);
+                    logger.atDebug().log("Data {}", t._2());
+                    T result = factory.apply(t._2());
                     return result == null
                             ? Flowable.empty()
                             : Flowable.just(result);

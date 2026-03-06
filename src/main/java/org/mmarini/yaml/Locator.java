@@ -1,7 +1,7 @@
 /*
- * Copyright (c) 2021-2023 Marco Marini, marco.marini@mmarini.org
+ * Copyright (c) 2021-2026 Marco Marini, marco.marini@mmarini.org
  *
- * Permission is hereby granted, free of charge, to any person
+ *  Permission is hereby granted, free of charge, to any person
  * obtaining a copy of this software and associated documentation
  * files (the "Software"), to deal in the Software without
  * restriction, including without limitation the rights to use,
@@ -39,7 +39,7 @@ import java.util.stream.Stream;
 import static java.util.Objects.requireNonNull;
 import static org.mmarini.Utils.stream;
 
-public class Locator {
+public record Locator(JsonPointer pointer) {
 
     private static final Locator ROOT = new Locator(JsonPointer.empty());
 
@@ -56,8 +56,6 @@ public class Locator {
     public static Locator root() {
         return ROOT;
     }
-
-    public final JsonPointer pointer;
 
     public Locator(JsonPointer pointer) {
         this.pointer = requireNonNull(pointer);
@@ -89,7 +87,8 @@ public class Locator {
     /**
      *
      */
-    public JsonPointer getPointer() {
+    @Override
+    public JsonPointer pointer() {
         return pointer;
     }
 

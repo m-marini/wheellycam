@@ -1,14 +1,16 @@
 ---
-$schema: https://mmarini.org/wheelly/qrcode-schema-0.3
-cameraUrl: http://192.168.1.201
-#syncInterval: 60000
+$schema: https://mmarini.org/wheelly/qrcode-schema-0.4
 #brokerUrl: tcp://localhost:1883
 mqttUser: wheellyj
 mqttPassword: wheellyj
-#retryInterval: 3000
 #deviceName: wheellyqr
 #deviceId: 0123456789abc
-#deviceVersion: v0
+deviceVersion: v1
 #cameraName: wheellycam
 cameraId: 38182bb1a31c
 #cameraVersion: v0
+ledIntensity: 255
+frameSize: 10
+cameraInterval: 1000
+retryInterval: 3000
+configureTimeout: 3000

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+### Added
+
+- Issue [#26](https://github.com/m-marini/wheellycam/issues/26): Add camera control
+
 ## [0.4.0] 2026-03-06
 
 ### Added

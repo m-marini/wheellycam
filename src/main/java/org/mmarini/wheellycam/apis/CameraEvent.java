@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 Marco Marini, marco.marini@mmarini.org
+ * Copyright (c) 2025-2026 Marco Marini, marco.marini@mmarini.org
  *
  *  Permission is hereby granted, free of charge, to any person
  * obtaining a copy of this software and associated documentation
@@ -43,7 +43,7 @@ import static java.lang.String.format;
  * @param width     the camera image width
  * @param height    the camera image height
  * @param points    the qr code vertices
- * @param image
+ * @param image     the image
  */
 public record CameraEvent(long timestamp, String qrcode, int width, int height, Mat points, String line,
                           BufferedImage image) {

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 Marco Marini, marco.marini@mmarini.org
+ * Copyright (c) 2025-2026 Marco Marini, marco.marini@mmarini.org
  *
  *  Permission is hereby granted, free of charge, to any person
  * obtaining a copy of this software and associated documentation
@@ -117,7 +117,7 @@ public class Device {
      * @param command the command tuple with topics and payload
      */
     void execute(Tuple2<String, String> command) {
-        execute(command._1, command._2);
+        execute(command._1(), command._2());
     }
 
     /**
@@ -166,7 +166,7 @@ public class Device {
      */
     public Device subscribe() throws MqttException {
         client.subscribe(subCommandTopic(), 1)
-                .map(t -> t.setV2(new String(t._2.getPayload())))
+                .map(t -> t.setV2(new String(t._2().getPayload())))
                 .observeOn(Schedulers.computation())
                 .subscribe(this::execute);
         return this;

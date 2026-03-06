@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2024 Marco Marini, marco.marini@mmarini.org
+ * Copyright (c) 2024-2026 Marco Marini, marco.marini@mmarini.org
  *
  *  Permission is hereby granted, free of charge, to any person
  * obtaining a copy of this software and associated documentation
@@ -30,6 +30,7 @@ package org.mmarini.wheellycam.apps;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import io.reactivex.rxjava3.core.Completable;
+import io.reactivex.rxjava3.core.Maybe;
 import io.reactivex.rxjava3.schedulers.Schedulers;
 import net.sourceforge.argparse4j.ArgumentParsers;
 import net.sourceforge.argparse4j.impl.Arguments;
@@ -39,7 +40,6 @@ import net.sourceforge.argparse4j.inf.Namespace;
 import org.eclipse.paho.client.mqttv3.MqttException;
 import org.eclipse.paho.client.mqttv3.MqttMessage;
 import org.mmarini.swing.GridLayoutHelper;
-import org.mmarini.swing.SwingUtils;
 import org.mmarini.wheelly.mqtt.Device;
 import org.mmarini.wheelly.mqtt.RemoteDevice;
 import org.mmarini.wheelly.mqtt.RxMqttClient;
@@ -56,7 +56,6 @@ import org.slf4j.LoggerFactory;
 import javax.imageio.ImageIO;
 import javax.swing.*;
 import java.awt.*;
-import java.awt.event.ActionEvent;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.awt.image.BufferedImage;
@@ -81,14 +80,19 @@ public class QRCode {
     public static final String DEFAULT_BROKER_URL = "tcp://localhost:1883";
     public static final long DEFAULT_RETRY_INTERVAL = 3000L;
     public static final String DEFAULT_DEVICE_NAME = "wheellyqr";
-    public static final String DEFAULT_DEVICE_VERSION = "v0";
+    public static final String DEFAULT_DEVICE_VERSION = "v1";
     public static final String DEFAULT_CAMERA_NAME = "wheellycam";
     public static final String DEFAULT_CAMERA_VERSION = "v0";
+    public static final int DEFAULT_CAMERA_INTERVAL = 1000;
+    public static final int COMMAND_TIMEOUT = 3000;
+    public static final int DEFAULT_FRAME_SIZE = 10;
+    public static final int DEFAULT_LED_INTENSITY = 255;
+    public static final int DEFAULT_CONFIGURE_TIMEOUT = 2000;
     private static final Logger logger = LoggerFactory.getLogger(QRCode.class);
-    private static final String QRCODE_SCHEMA_YML = "https://mmarini.org/wheelly/qrcode-schema-0.3";
     private static final Color ERROR_COLOR = Color.RED;
     private static final Color SUCCESS_COLOR = Color.GREEN;
-    public static final int COMMAND_TIMEOUT = 3000;
+    private static final String QRCODE_SCHEMA_YML = "https://mmarini.org/wheelly/qrcode-schema-0.4";
+    private static final Color WARNING_COLOR = Color.YELLOW;
 
     /*
      * Load the native library of opencv
@@ -147,12 +151,15 @@ public class QRCode {
     private final JTextField statusText;
     private final JTextField deviceField;
     private final JLabel imageView;
-    private final JButton captureButton;
     private final AtomicReference<Status> status;
     private RxMqttClient mqttClient;
     private long retryInterval;
     private Device qrDevice;
     private RemoteDevice cameraDevice;
+    private long cameraInterval;
+    private long configureTimeout;
+    private int ledIntensity;
+    private int cameraFrameSize;
 
     /**
      * Create the camera server
@@ -165,8 +172,7 @@ public class QRCode {
         this.deviceField = new JTextField();
         this.frame = new JFrame();
         this.imageView = new JLabel();
-        this.captureButton = SwingUtils.createButton("QRCode.captureButton");
-        this.status = new AtomicReference<>(new Status(false));
+        this.status = new AtomicReference<>(new Status(false, false, false));
 
         statusText.setEditable(false);
         statusText.setColumns(80);
@@ -189,6 +195,22 @@ public class QRCode {
     }
 
     /**
+     * Capture image (resulting status: capturing)
+     */
+    private void captureImage() {
+        // Status capturing
+        Status s0 = status.getAndUpdate(s -> s.capturingImage(true));
+        if (!s0.capturingImage()) {
+            logger.atDebug().log("Sending ca command ...");
+            info(WARNING_COLOR, "Capturing image ...");
+            executeCameraCommand("ca", "", COMMAND_TIMEOUT)
+                    .subscribe(result ->
+                                    logger.atDebug().log("Capture command result [{}]", result),
+                            this::onCaptureError);
+        }
+    }
+
+    /**
      * Close mqtt client
      */
     private void closeMqttClient() {
@@ -202,15 +224,65 @@ public class QRCode {
     }
 
     /**
+     * Configure camera
+     */
+    private void configureCamera() {
+        Status s0 = status.getAndUpdate(s -> s.cameraConfiguring(true));
+        if (!s0.cameraConfiguring()) {
+            String msg = ledIntensity + "," + cameraFrameSize;
+            logger.atDebug().log("Sending cf command ...");
+            info(WARNING_COLOR, "Configuring camera ...");
+            executeCameraCommand("cf", msg, configureTimeout)
+                    .map(res -> res.equals(msg))
+                    .defaultIfEmpty(false)
+                    .subscribe(this::onCameraConfigResult,
+                            this::onCameraConfigError);
+        }
+    }
+
+    /**
      * Creates content
      */
     private void createContent() {
         new GridLayoutHelper<>(frame.getContentPane()).modify("insets,2,2")
                 .modify("at,0,0").add("Device")
                 .modify("at,1,0 hw,1 fill e").add(deviceField)
-                .modify("at,2,0 noweight nofill center").add(captureButton)
                 .modify("at,0,1 hspan,3 fill weight,1,1 center").add(new JScrollPane(imageView))
                 .modify("at,0,2 hspan,3 hfill noweight center").add(statusText);
+    }
+
+    /**
+     * Creates control flows
+     */
+    private void createFlow() {
+        frame.addWindowListener(new WindowAdapter() {
+            @Override
+            public void windowClosed(WindowEvent e) {
+                logger.atInfo().log("Closing ...");
+                status.updateAndGet(status1 -> status1.exit(true));
+                closeMqttClient();
+            }
+        });
+    }
+
+    /**
+     * Executes the command returning the command response
+     *
+     * @param command the command
+     * @param arg     the command argument
+     * @param timeout the execution timeout
+     */
+    private Maybe<String> executeCameraCommand(String command, String arg, long timeout) {
+        if (!mqttClient.isConnected()) {
+            return Maybe.empty();
+        } else {
+            try {
+                return cameraDevice.execute(StringCommand.create(command, arg), timeout);
+            } catch (Throwable e) {
+                notifyError("Error executing camera command", e);
+                return Maybe.error(e);
+            }
+        }
     }
 
     /**
@@ -228,36 +300,6 @@ public class QRCode {
     }
 
     /**
-     * Connects mqtt client
-     */
-    private void mqttConnect() {
-        if (!status.get().exit) {
-            logger.atInfo().log("Starting mqtt client ...");
-            try {
-                mqttClient.connect().subscribe(this::onMqttConnected,
-                        this::onMqttConnectionError);
-            } catch (MqttException e) {
-                onMqttConnectionError(e);
-            }
-        }
-    }
-
-    /**
-     * Creates control flows
-     */
-    private void createFlow() {
-        frame.addWindowListener(new WindowAdapter() {
-            @Override
-            public void windowClosed(WindowEvent e) {
-                logger.atInfo().log("Closing ...");
-                status.updateAndGet(status1 -> status1.exit(true));
-                closeMqttClient();
-            }
-        });
-        captureButton.addActionListener(this::onCaptureButton);
-    }
-
-    /**
      * Returns the image from mqtt message
      *
      * @param message the message
@@ -271,6 +313,69 @@ public class QRCode {
             info(ERROR_COLOR, "Error getting camera");
             return null;
         }
+    }
+
+    /**
+     * Connects mqtt client (resulting status: connecting)
+     */
+    private void mqttConnect() {
+        if (!status.get().exit) {
+            logger.atInfo().log("Starting mqtt client ...");
+            info(WARNING_COLOR, "Starting mqtt client ...");
+            try {
+                mqttClient.connect().subscribe(this::onMqttConnected,
+                        this::onMqttConnectionError);
+            } catch (MqttException e) {
+                onMqttConnectionError(e);
+            }
+        }
+    }
+
+    /**
+     * Notify an error
+     *
+     * @param msg the error message
+     * @param e   the error cause
+     */
+    private void notifyError(String msg, Throwable e) {
+        info(ERROR_COLOR, msg);
+        logger.atError().setCause(e).log(msg);
+    }
+
+    /**
+     * Handles configuration error
+     *
+     * @param err the error cause
+     */
+    private void onCameraConfigError(Throwable err) {
+        status.updateAndGet(s -> s.cameraConfiguring(false));
+        notifyError("Error configuring camera", err);
+        waitRetryConfigure();
+    }
+
+    /**
+     * Handle the configuration result
+     *
+     * @param configured true if configured
+     */
+    private void onCameraConfigResult(boolean configured) {
+        status.updateAndGet(s -> s.cameraConfiguring(false));
+        if (configured) {
+            logger.atError().log("Camera configured");
+            waitCapture();
+        } else {
+            logger.atError().log("Error configuring camera");
+            waitRetryConfigure();
+        }
+    }
+
+    /**
+     * Handles camera image error
+     *
+     * @param error the error
+     */
+    private void onCameraError(Throwable error) {
+        notifyError("Error capturing image", error);
     }
 
     /**
@@ -302,21 +407,37 @@ public class QRCode {
         info(SUCCESS_COLOR, "Image captured QRCODE=" + event.qrcode());
     }
 
-    private void onCaptureButton(ActionEvent actionEvent) {
-        cameraDevice.execute(StringCommand.create("ca", ""), COMMAND_TIMEOUT)
-                .subscribe(x -> {
-                        },
-                        this::onCaptureError);
+    /**
+     * Handle the hi message from camera device
+     *
+     * @param ignored the message
+     */
+    private void onCameraHiMessage(String ignored) {
+        logger.atInfo().log("Camera hi message");
+        configureCamera();
     }
 
+    /**
+     * Handle capture command error
+     *
+     * @param error the error
+     */
     private void onCaptureError(Throwable error) {
-        logger.atError().setCause(error).log("Error capturing image");
-        info(ERROR_COLOR, "Error capturing image");
+        status.updateAndGet(s -> s.capturingImage(false));
+        notifyError("Error capturing image", error);
+        waitRetryConfigure();
     }
 
+    /**
+     * Handle image captured
+     *
+     * @param image the image
+     */
     private void onImage(BufferedImage image) {
+        status.updateAndGet(s -> s.capturingImage(false));
         CameraEvent event = QRReader.captureQrCode(image);
         onCameraEvent(event);
+        waitCapture();
     }
 
     /**
@@ -335,6 +456,7 @@ public class QRCode {
             logger.atError().setCause(e).log("Error subscribing device");
             info(ERROR_COLOR, "Error subscribing topic");
         }
+        configureCamera();
     }
 
     /**
@@ -349,13 +471,31 @@ public class QRCode {
     }
 
     /**
+     * Handle wait retry configuration timeout
+     */
+    private void onRetryConfigTimeout() {
+        configureCamera();
+    }
+
+    /**
+     * Handle the wait capture timeout
+     */
+    private void onWaitCapture() {
+        captureImage();
+    }
+
+    /**
      * Runs the application
      */
     private void run() throws IOException, MqttException {
         JsonNode config = fromFile(args.getString("config"));
         JsonSchemas.instance().validateOrThrow(config, QRCODE_SCHEMA_YML);
+        this.cameraInterval = Locator.locate("cameraInterval").getNode(config).asLong(DEFAULT_CAMERA_INTERVAL);
+        this.cameraFrameSize = Locator.locate("frameSize").getNode(config).asInt(DEFAULT_FRAME_SIZE);
+        this.ledIntensity = Locator.locate("ledIntensity").getNode(config).asInt(DEFAULT_LED_INTENSITY);
+        this.configureTimeout = Locator.locate("configureTimeout").getNode(config).asLong(DEFAULT_CONFIGURE_TIMEOUT);
 
-        // Creates mqtt client
+        // Creates qrcode mqtt client
         String serverUrl = Locator.locate("brokerUrl").getNode(config).asText(DEFAULT_BROKER_URL);
         String userName = Locator.locate("mqttUser").getNode(config).asText();
         String password = Locator.locate("mqttPassword").getNode(config).asText();
@@ -366,31 +506,77 @@ public class QRCode {
         this.mqttClient = RxMqttClient.create(serverUrl, null, userName, password);
         this.qrDevice = new Device(deviceName, deviceId, deviceVersion, mqttClient);
 
+        // Creates camera mqtt client
         String cameraId = Locator.locate("cameraId").getNode(config).asText();
-        String cameraName = Locator.locate("deviceName").getNode(config).asText(DEFAULT_CAMERA_NAME);
-        String cameraVersion = Locator.locate("deviceVersion").getNode(config).asText(DEFAULT_CAMERA_VERSION);
+        String cameraName = Locator.locate("cameraName").getNode(config).asText(DEFAULT_CAMERA_NAME);
+        String cameraVersion = Locator.locate("cameraVersion").getNode(config).asText(DEFAULT_CAMERA_VERSION);
         this.cameraDevice = new RemoteDevice(cameraName, cameraId, cameraVersion, mqttClient);
-
         deviceField.setText(deviceName + "/" + deviceId + "/" + deviceVersion);
         cameraDevice.readData("img", this::message2Image)
                 .subscribe(this::onImage);
 
+        cameraDevice.readData("hi", m -> new String(m.getPayload()))
+                .subscribe(this::onCameraHiMessage,
+                        this::onCameraError);
         frame.setVisible(true);
         Utils.center(frame);
-
         mqttConnect();
+    }
+
+    /**
+     * Wait for capture interval
+     */
+    private void waitCapture() {
+        Completable.timer(cameraInterval, TimeUnit.MILLISECONDS)
+                .subscribe(this::onWaitCapture);
+    }
+
+    /**
+     * Wait retry configuration (resulting status: waitRetryConfig)
+     */
+    private void waitRetryConfigure() {
+        Completable.timer(retryInterval, TimeUnit.MILLISECONDS)
+                .subscribe(this::onRetryConfigTimeout);
     }
 
     /**
      * The server status
      *
-     * @param exit
+     * @param exit              true if exit
+     * @param capturingImage    true if capturing image
+     * @param cameraConfiguring true if configuring camera
      */
-    public record Status(boolean exit) {
+    public record Status(boolean exit, boolean capturingImage, boolean cameraConfiguring) {
+        /**
+         * Returns the status with camera configuring
+         *
+         * @param cameraConfiguring true if camera is configuring
+         */
+        public Status cameraConfiguring(boolean cameraConfiguring) {
+            return this.cameraConfiguring != cameraConfiguring
+                    ? new Status(exit, capturingImage, cameraConfiguring)
+                    : this;
+        }
 
+        /**
+         * Returns the status with camera capturing
+         *
+         * @param capturingImage true if camera is capturing
+         */
+        public Status capturingImage(boolean capturingImage) {
+            return this.capturingImage != capturingImage
+                    ? new Status(exit, capturingImage, cameraConfiguring)
+                    : this;
+        }
+
+        /**
+         * Returns the status with exit value
+         *
+         * @param exit true if exit
+         */
         public Status exit(boolean exit) {
             return this.exit != exit
-                    ? new Status(true)
+                    ? new Status(exit, capturingImage, cameraConfiguring)
                     : this;
         }
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 Marco Marini, marco.marini@mmarini.org
+ * Copyright (c) 2025-2026 Marco Marini, marco.marini@mmarini.org
  *
  *  Permission is hereby granted, free of charge, to any person
  * obtaining a copy of this software and associated documentation
@@ -74,8 +74,8 @@ class DeviceTest {
         sub.assertComplete();
         sub.assertNoErrors();
         sub.assertValueCount(1);
-        assertEquals("sens/test/1/v0/ts", sub.values().getFirst()._1);
-        assertEquals("data", new String(sub.values().getFirst()._2.getPayload()));
+        assertEquals("sens/test/1/v0/ts", sub.values().getFirst()._1());
+        assertEquals("data", new String(sub.values().getFirst()._2().getPayload()));
     }
 
     @Test
@@ -102,10 +102,10 @@ class DeviceTest {
         sub.assertComplete();
         sub.assertNoErrors();
         sub.assertValueCount(2);
-        assertEquals("cmd/test/1/v0/ts", sub.values().getFirst()._1);
-        assertEquals("arg", new String(sub.values().getFirst()._2.getPayload()));
-        assertEquals("cmd/test/1/v0/ts/res", sub.values().get(1)._1);
-        assertEquals("ARG", new String(sub.values().get(1)._2.getPayload()));
+        assertEquals("cmd/test/1/v0/ts", sub.values().getFirst()._1());
+        assertEquals("arg", new String(sub.values().getFirst()._2().getPayload()));
+        assertEquals("cmd/test/1/v0/ts/res", sub.values().get(1)._1());
+        assertEquals("ARG", new String(sub.values().get(1)._2().getPayload()));
     }
 
     @Test
@@ -132,9 +132,9 @@ class DeviceTest {
         sub.assertComplete();
         sub.assertNoErrors();
         sub.assertValueCount(2);
-        assertEquals("cmd/test/1/v0/ts", sub.values().getFirst()._1);
-        assertEquals("arg", new String(sub.values().getFirst()._2.getPayload()));
-        assertEquals("cmd/test/1/v0/ts/err", sub.values().get(1)._1);
-        assertEquals("Not implemented", new String(sub.values().get(1)._2.getPayload()));
+        assertEquals("cmd/test/1/v0/ts", sub.values().getFirst()._1());
+        assertEquals("arg", new String(sub.values().getFirst()._2().getPayload()));
+        assertEquals("cmd/test/1/v0/ts/err", sub.values().get(1)._1());
+        assertEquals("Not implemented", new String(sub.values().get(1)._2().getPayload()));
     }
 }
