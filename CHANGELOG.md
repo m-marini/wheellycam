@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [0.4.0] 2026-03-06
+
 ### Added
 
 - Issue [#23](https://github.com/m-marini/wheellycam/issues/23): Add MQTT architecture
