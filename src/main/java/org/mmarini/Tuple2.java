@@ -1,7 +1,34 @@
+/*
+ * Copyright (c) 2026 Marco Marini, marco.marini@mmarini.org
+ *
+ *  Permission is hereby granted, free of charge, to any person
+ * obtaining a copy of this software and associated documentation
+ * files (the "Software"), to deal in the Software without
+ * restriction, including without limitation the rights to use,
+ * copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following
+ * conditions:
+ *
+ * The above copyright notice and this permission notice shall be
+ * included in all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+ * OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+ * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+ * HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+ * WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+ * OTHER DEALINGS IN THE SOFTWARE.
+ *
+ *    END OF TERMS AND CONDITIONS
+ *
+ */
+
 package org.mmarini;
 
 import java.util.Map;
-import java.util.Objects;
 import java.util.StringJoiner;
 import java.util.function.Function;
 import java.util.stream.Collector;
@@ -9,7 +36,7 @@ import java.util.stream.Collectors;
 
 import static java.util.Objects.requireNonNull;
 
-public class Tuple2<T1, T2> {
+public record Tuple2<T1, T2>(T1 _1, T2 _2) {
 
     /**
      * Returns the function to map the second value
@@ -67,26 +94,15 @@ public class Tuple2<T1, T2> {
         return Collectors.toMap(Tuple2<K, V>::getV1, Tuple2<K, V>::getV2);
     }
 
-    public final T1 _1;
-    public final T2 _2;
-
     /**
      * Creates a Tuple2
      *
-     * @param v1 first value
-     * @param v2 second value
+     * @param _1 first value
+     * @param _2 second value
      */
-    public Tuple2(T1 v1, T2 v2) {
-        this._1 = requireNonNull(v1);
-        this._2 = requireNonNull(v2);
-    }
-
-    @Override
-    public boolean equals(Object o) {
-        if (this == o) return true;
-        if (o == null || getClass() != o.getClass()) return false;
-        Tuple2<?, ?> tuple2 = (Tuple2<?, ?>) o;
-        return Objects.equals(_1, tuple2._1) && Objects.equals(_2, tuple2._2);
+    public Tuple2(T1 _1, T2 _2) {
+        this._1 = requireNonNull(_1);
+        this._2 = requireNonNull(_2);
     }
 
     /**
@@ -121,11 +137,6 @@ public class Tuple2<T1, T2> {
      */
     public <R> Tuple2<T1, R> setV2(R v2) {
         return new Tuple2<>(_1, v2);
-    }
-
-    @Override
-    public int hashCode() {
-        return Objects.hash(_1, _2);
     }
 
     @Override
