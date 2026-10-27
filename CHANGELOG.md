@@ -7,11 +7,13 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [[0.5.0]](https://github.com/m-marini/wheellycam/releases/tag/0.5.0) 2026-10-27
+
 ### Added
 
 - Issue [#26](https://github.com/m-marini/wheellycam/issues/26): Add camera control
 
-## [0.4.0] 2026-03-06
+## [[0.4.0]](https://github.com/m-marini/wheellycam/releases/tag/0.4.0) 2026-03-06
 
 ### Added
 
