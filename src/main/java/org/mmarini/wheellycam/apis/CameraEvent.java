@@ -39,30 +39,30 @@ import static java.lang.String.format;
  * Stores the Camera Event properties
  *
  * @param timestamp the event timestamp
- * @param qrcode    the qr code (? if unrecognized)
+ * @param markerId    the qr code (? if unrecognized)
  * @param width     the camera image width
  * @param height    the camera image height
  * @param points    the qr code vertices
  * @param image     the image
  */
-public record CameraEvent(long timestamp, String qrcode, int width, int height, Mat points, String line,
+public record CameraEvent(long timestamp, int markerId, int width, int height, Mat points, String line,
                           BufferedImage image) {
-    public static CameraEvent create(long timestamp, String qrcode, int width, int height, Mat points, BufferedImage image) {
-        String line = qrCode2String(timestamp, qrcode, width, height, points);
-        return new CameraEvent(timestamp, qrcode, width, height, points, line, image);
+    public static CameraEvent create(long timestamp, int markerId, int width, int height, Mat points, BufferedImage image) {
+        String line = qrCode2String(timestamp, markerId, width, height, points);
+        return new CameraEvent(timestamp, markerId, width, height, points, line, image);
     }
 
     /**
      * Returns the string of qrcode result
      */
-    private static String qrCode2String(long timestamp, String qrcode, int width, int height, Mat points) {
-        return qrcode.isEmpty()
-                ? format(Locale.ENGLISH, "%d,?,%d,%d,0,0,0,0,0,0,0,0",
+    private static String qrCode2String(long timestamp, int markerId, int width, int height, Mat points) {
+        return markerId < 0
+                ? format(Locale.ENGLISH, "%d,-1,%d,%d,0,0,0,0,0,0,0,0",
                 timestamp,
                 width, height)
                 : format(Locale.ENGLISH, "%d,%s,%d,%d,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f",
                 timestamp,
-                qrcode,
+                markerId,
                 width, height,
                 points.get(0, 0)[0],
                 points.get(0, 0)[1],
