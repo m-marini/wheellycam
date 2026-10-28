@@ -44,8 +44,8 @@ import org.mmarini.wheelly.mqtt.Device;
 import org.mmarini.wheelly.mqtt.RemoteDevice;
 import org.mmarini.wheelly.mqtt.RxMqttClient;
 import org.mmarini.wheelly.mqtt.StringCommand;
+import org.mmarini.wheellycam.apis.ArucoReader;
 import org.mmarini.wheellycam.apis.CameraEvent;
-import org.mmarini.wheellycam.apis.QRReader;
 import org.mmarini.wheellycam.swing.Utils;
 import org.mmarini.yaml.Locator;
 import org.opencv.core.Core;
@@ -71,15 +71,15 @@ import static java.lang.String.format;
 import static org.mmarini.yaml.Utils.fromFile;
 
 /**
- * QrCode image recognizer
+ * QrCode image recogniser
  */
-public class QRCode {
-    public static final Color QR_FRAME_COLOR = Color.WHITE;
-    public static final Font QR_FONT = Font.decode(Font.DIALOG).deriveFont(20f);
-    public static final BasicStroke QR_STROKE = new BasicStroke(3);
+public class ArucoMarker {
+    public static final Color MARKER_FRAME_COLOR = Color.WHITE;
+    public static final Font MARKER_FONT = Font.decode(Font.DIALOG).deriveFont(20f);
+    public static final BasicStroke MARKER_STROKE = new BasicStroke(3);
     public static final String DEFAULT_BROKER_URL = "tcp://localhost:1883";
     public static final long DEFAULT_RETRY_INTERVAL = 3000L;
-    public static final String DEFAULT_DEVICE_NAME = "wheellyqr";
+    public static final String DEFAULT_DEVICE_NAME = "wheellyma";
     public static final String DEFAULT_DEVICE_VERSION = "v1";
     public static final String DEFAULT_CAMERA_NAME = "wheellycam";
     public static final String DEFAULT_CAMERA_VERSION = "v0";
@@ -88,7 +88,7 @@ public class QRCode {
     public static final int DEFAULT_FRAME_SIZE = 10;
     public static final int DEFAULT_LED_INTENSITY = 255;
     public static final int DEFAULT_CONFIGURE_TIMEOUT = 2000;
-    private static final Logger logger = LoggerFactory.getLogger(QRCode.class);
+    private static final Logger logger = LoggerFactory.getLogger(ArucoMarker.class);
     private static final Color ERROR_COLOR = Color.RED;
     private static final Color SUCCESS_COLOR = Color.GREEN;
     private static final String QRCODE_SCHEMA_YML = "https://mmarini.org/wheelly/qrcode-schema-0.4";
@@ -105,12 +105,12 @@ public class QRCode {
      * Returns the argument parser
      */
     private static ArgumentParser createParser() {
-        ArgumentParser parser = ArgumentParsers.newFor(QRCode.class.getName()).build()
+        ArgumentParser parser = ArgumentParsers.newFor(ArucoMarker.class.getName()).build()
                 .defaultHelp(true)
                 .version(Messages.getString("QRCode.title"))
                 .description("Run the QR Code server.");
         parser.addArgument("-c", "--config")
-                .setDefault("qrcode.yml")
+                .setDefault("arucomarker.yml")
                 .help("specify the configuration file");
         parser.addArgument("-v", "--version")
                 .action(Arguments.version())
@@ -122,7 +122,7 @@ public class QRCode {
      * Returns the device id by computer name and main class
      */
     private static String generateDeviceId() {
-        String domainName = System.getenv("COMPUTERNAME") + QRCode.class.getCanonicalName();
+        String domainName = System.getenv("COMPUTERNAME") + ArucoMarker.class.getCanonicalName();
         UUID uuid = UUID.nameUUIDFromBytes(domainName.getBytes());
         long lsb = uuid.getLeastSignificantBits();
         return format("%012x", lsb & 0xffffffffffffL);
@@ -136,7 +136,7 @@ public class QRCode {
     public static void main(String[] args) {
         ArgumentParser parser = createParser();
         try {
-            new QRCode(parser.parseArgs(args)).run();
+            new ArucoMarker(parser.parseArgs(args)).run();
         } catch (ArgumentParserException e) {
             parser.handleError(e);
             System.exit(1);
@@ -166,7 +166,7 @@ public class QRCode {
      *
      * @param args the arguments
      */
-    public QRCode(Namespace args) {
+    public ArucoMarker(Namespace args) {
         this.args = args;
         this.statusText = new JTextField();
         this.deviceField = new JTextField();
@@ -385,26 +385,29 @@ public class QRCode {
      */
     private void onCameraEvent(CameraEvent event) {
         BufferedImage img = event.image();
-        if (!event.qrcode().isEmpty()) {
+        if (event.markerId() >= 0) {
             // Draws qr code bound
             Mat pts = event.points();
             Graphics2D gr = img.createGraphics();
             Polygon poly = new Polygon();
-            gr.setStroke(QR_STROKE);
-            gr.setFont(QR_FONT);
+            gr.setStroke(MARKER_STROKE);
+            gr.setFont(MARKER_FONT);
             for (int i = 0; i < 4; i++) {
                 double[] p = pts.get(0, i);
                 int x = (int) round(p[0]);
                 int y = (int) round(p[1]);
                 poly.addPoint(x, y);
-                gr.drawString(event.qrcode(), x, y);
+                gr.drawString(String.valueOf(event.markerId()), x, y);
             }
-            gr.setColor(QR_FRAME_COLOR);
+            gr.setColor(MARKER_FRAME_COLOR);
             gr.draw(poly);
         }
-        imageView.setIcon(new ImageIcon(img));
-        qrDevice.publishData("qr", event.line());
-        info(SUCCESS_COLOR, "Image captured QRCODE=" + event.qrcode());
+        qrDevice.publishData("am", event.line());
+        ImageIcon icon = new ImageIcon(img);
+        SwingUtilities.invokeLater(() -> {
+            imageView.setIcon(icon);
+            info(SUCCESS_COLOR, "Image captured makerId=" + event.markerId());
+        });
     }
 
     /**
@@ -435,7 +438,7 @@ public class QRCode {
      */
     private void onImage(BufferedImage image) {
         status.updateAndGet(s -> s.capturingImage(false));
-        CameraEvent event = QRReader.captureQrCode(image);
+        CameraEvent event = ArucoReader.captureMarker(image);
         onCameraEvent(event);
         waitCapture();
     }

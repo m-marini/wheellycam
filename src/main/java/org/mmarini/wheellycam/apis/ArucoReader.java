@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2024 Marco Marini, marco.marini@mmarini.org
+ * Copyright (c) 2024-2026 Marco Marini, marco.marini@mmarini.org
  *
  *  Permission is hereby granted, free of charge, to any person
  * obtaining a copy of this software and associated documentation
@@ -30,18 +30,23 @@ package org.mmarini.wheellycam.apis;
 
 import org.opencv.core.CvType;
 import org.opencv.core.Mat;
-import org.opencv.objdetect.QRCodeDetector;
+import org.opencv.objdetect.ArucoDetector;
+import org.opencv.objdetect.DetectorParameters;
+import org.opencv.objdetect.Dictionary;
+import org.opencv.objdetect.Objdetect;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.awt.image.BufferedImage;
 import java.awt.image.DataBufferByte;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * Controls the webcam
  * -Djava.library.path=C:\opencv\build\java\x64
  */
-public abstract class QRReader {
+public abstract class ArucoReader {
 
     public static final int SIZE_96X96 = 0;
     public static final int SIZE_160X120 = 1;
@@ -57,7 +62,7 @@ public abstract class QRReader {
     public static final int SIZE_1280X720 = 11;
     public static final int SIZE_1280X1024 = 12;
     public static final int SIZE_1600X1200 = 13;
-    static final Logger logger = LoggerFactory.getLogger(QRReader.class);
+    static final Logger logger = LoggerFactory.getLogger(ArucoReader.class);
 
     static {
         System.loadLibrary("opencv_java4100");
@@ -66,13 +71,27 @@ public abstract class QRReader {
     /**
      * Returns the captured qr code if any
      */
-    static public CameraEvent captureQrCode(BufferedImage img) {
+    static public CameraEvent captureMarker(BufferedImage img) {
         byte[] pixels = ((DataBufferByte) img.getRaster().getDataBuffer()).getData();
         Mat image = new Mat(img.getHeight(), img.getWidth(), CvType.CV_8UC(3));
         image.put(0, 0, pixels);
         long timestamp = System.currentTimeMillis();
-        Mat points = new Mat();
-        String data = new QRCodeDetector().detectAndDecode(image, points);
-        return CameraEvent.create(timestamp, data, image.width(), image.height(), points, img);
+        Dictionary dictioanary = Objdetect.getPredefinedDictionary(Objdetect.DICT_4X4_50);
+        DetectorParameters params = new DetectorParameters();
+        ArucoDetector detector = new ArucoDetector(dictioanary, params);
+
+        List<Mat> edges = new ArrayList<>(); // four corners markers
+        Mat ids = new Mat();                  // found marker ids
+        List<Mat> invalid = new ArrayList<>(); // invalid markers
+
+        detector.detectMarkers(image, edges, ids, invalid);
+        if (!ids.empty()) {
+            double[] idVal = ids.get(0, 0);
+            int markerId = (int) idVal[0];
+            logger.atInfo().log("markerId: {}", markerId);
+            logger.atInfo().log("edges: {}", edges);
+            return CameraEvent.create(timestamp, markerId, image.width(), image.height(), edges.getFirst(), img);
+        }
+        return CameraEvent.create(timestamp, -1, image.width(), image.height(), null, img);
     }
 }

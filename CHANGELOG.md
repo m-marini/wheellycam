@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+### Added
+
+- Issue [#29](https://github.com/m-marini/wheellycam/issues/29): Aruco marker recognition
+
 ## [[0.5.0]](https://github.com/m-marini/wheellycam/releases/tag/0.5.0) 2026-10-27
 
 ### Added

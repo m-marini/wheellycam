@@ -34,7 +34,7 @@
 
     <groupId>org.mmarini</groupId>
     <artifactId>wheellycam</artifactId>
-    <version>0.5.0</version>
+    <version>0.6.0</version>
     <name>wheellycam</name>
     <description>Wheelly Camera Server</description>
 
@@ -43,7 +43,7 @@
         <maven.compiler.target>21</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <java.version>21</java.version>
-        <jar.mainClass>org.mmarini.wheellycam.apps.QRCode</jar.mainClass>
+        <jar.mainClass>org.mmarini.wheellycam.apps.ArucoMarker</jar.mainClass>
 
         <opencv.version>4.10.0</opencv.version>
         <opencv.jarFile>C:/opencv/build/java/opencv-4100.jar</opencv.jarFile>

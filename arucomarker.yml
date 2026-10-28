@@ -7,10 +7,11 @@ mqttPassword: wheellyj
 #deviceId: 0123456789abc
 deviceVersion: v1
 #cameraName: wheellycam
-cameraId: 38182bb1a31c
+#cameraId: 38182BB1A31C
+cameraId: E05A1BE2FE04
 #cameraVersion: v0
 ledIntensity: 255
-frameSize: 10
+frameSize: 11
 cameraInterval: 1000
 retryInterval: 3000
 configureTimeout: 3000
