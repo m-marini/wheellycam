@@ -84,7 +84,7 @@ public class ArucoMarker {
     public static final String DEFAULT_CAMERA_NAME = "wheellycam";
     public static final String DEFAULT_CAMERA_VERSION = "v0";
     public static final int DEFAULT_CAMERA_INTERVAL = 1000;
-    public static final int COMMAND_TIMEOUT = 3000;
+    public static final int COMMAND_TIMEOUT = 10000;
     public static final int DEFAULT_FRAME_SIZE = 10;
     public static final int DEFAULT_LED_INTENSITY = 255;
     public static final int DEFAULT_CONFIGURE_TIMEOUT = 2000;
@@ -375,7 +375,7 @@ public class ArucoMarker {
      * @param error the error
      */
     private void onCameraError(Throwable error) {
-        notifyError("Error capturing image", error);
+        notifyError("Error connecting camera", error);
     }
 
     /**
