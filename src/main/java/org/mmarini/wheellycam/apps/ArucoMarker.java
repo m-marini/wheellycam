@@ -29,8 +29,8 @@
 package org.mmarini.wheellycam.apps;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import hu.akarnokd.rxjava3.swing.SwingSchedulers;
 import io.reactivex.rxjava3.core.Completable;
-import io.reactivex.rxjava3.core.Maybe;
 import io.reactivex.rxjava3.schedulers.Schedulers;
 import net.sourceforge.argparse4j.ArgumentParsers;
 import net.sourceforge.argparse4j.impl.Arguments;
@@ -38,40 +38,40 @@ import net.sourceforge.argparse4j.inf.ArgumentParser;
 import net.sourceforge.argparse4j.inf.ArgumentParserException;
 import net.sourceforge.argparse4j.inf.Namespace;
 import org.eclipse.paho.client.mqttv3.MqttException;
-import org.eclipse.paho.client.mqttv3.MqttMessage;
+import org.mmarini.Tuple2;
 import org.mmarini.swing.GridLayoutHelper;
 import org.mmarini.wheelly.mqtt.Device;
 import org.mmarini.wheelly.mqtt.RemoteDevice;
 import org.mmarini.wheelly.mqtt.RxMqttClient;
-import org.mmarini.wheelly.mqtt.StringCommand;
-import org.mmarini.wheellycam.apis.ArucoReader;
 import org.mmarini.wheellycam.apis.CameraEvent;
+import org.mmarini.wheellycam.apis.CameraImageFetcher;
+import org.mmarini.wheellycam.fsm.CaptureFSM;
+import org.mmarini.wheellycam.fsm.CaptureFSMConfig;
+import org.mmarini.wheellycam.fsm.WheellyCamCaptureFSM;
 import org.mmarini.wheellycam.swing.Utils;
 import org.mmarini.yaml.Locator;
-import org.opencv.core.Core;
 import org.opencv.core.Mat;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import javax.imageio.ImageIO;
 import javax.swing.*;
 import java.awt.*;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.awt.image.BufferedImage;
-import java.io.ByteArrayInputStream;
 import java.io.IOException;
-import java.io.InputStream;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static java.lang.Math.round;
 import static java.lang.String.format;
+import static org.mmarini.wheellycam.apis.CameraImageFetcher.DEFAULT_HTTP_CONNECTION_TIMEOUT;
+import static org.mmarini.wheellycam.apis.CameraImageFetcher.DEFAULT_HTTP_READ_TIMEOUT;
 import static org.mmarini.yaml.Utils.fromFile;
 
 /**
- * QrCode image recogniser
+ * ArUco image recogniser server application.
  */
 public class ArucoMarker {
     public static final Color MARKER_FRAME_COLOR = Color.WHITE;
@@ -83,26 +83,28 @@ public class ArucoMarker {
     public static final String DEFAULT_DEVICE_VERSION = "v1";
     public static final String DEFAULT_CAMERA_NAME = "wheellycam";
     public static final String DEFAULT_CAMERA_VERSION = "v0";
-    public static final int DEFAULT_CAMERA_INTERVAL = 1000;
-    public static final int COMMAND_TIMEOUT = 3000;
-    public static final int DEFAULT_FRAME_SIZE = 10;
-    public static final int DEFAULT_LED_INTENSITY = 255;
-    public static final int DEFAULT_CONFIGURE_TIMEOUT = 2000;
-    private static final Logger logger = LoggerFactory.getLogger(ArucoMarker.class);
+    private static final String QRCODE_SCHEMA_YML = "https://mmarini.org/wheelly/aruco-markers-schema-0.1";
     private static final Color ERROR_COLOR = Color.RED;
     private static final Color SUCCESS_COLOR = Color.GREEN;
-    private static final String QRCODE_SCHEMA_YML = "https://mmarini.org/wheelly/qrcode-schema-0.4";
     private static final Color WARNING_COLOR = Color.YELLOW;
+    private static final Logger logger = LoggerFactory.getLogger(ArucoMarker.class);
 
     /*
-     * Load the native library of opencv
+     * Loads the specific OpenCV native binary version required for image processing.
      */
     static {
-        System.loadLibrary(Core.NATIVE_LIBRARY_NAME);
+        try {
+            System.loadLibrary("opencv_java4100");
+        } catch (Exception e) {
+            logger.error("Failed to load opencv_java4100", e);
+            throw e;
+        }
     }
 
     /**
-     * Returns the argument parser
+     * Creates and returns the argument parser configured for the application.
+     *
+     * @return the initialised argument parser instance
      */
     private static ArgumentParser createParser() {
         ArgumentParser parser = ArgumentParsers.newFor(ArucoMarker.class.getName()).build()
@@ -119,7 +121,9 @@ public class ArucoMarker {
     }
 
     /**
-     * Returns the device id by computer name and main class
+     * Generates a unique device identifier based on the computer name and main class.
+     *
+     * @return a formatted string representing the unique device ID
      */
     private static String generateDeviceId() {
         String domainName = System.getenv("COMPUTERNAME") + ArucoMarker.class.getCanonicalName();
@@ -129,9 +133,9 @@ public class ArucoMarker {
     }
 
     /**
-     * Entry point
+     * Main entry point of the server application.
      *
-     * @param args the command line arguments
+     * @param args the command line arguments passed to the programme
      */
     public static void main(String[] args) {
         ArgumentParser parser = createParser();
@@ -146,244 +150,18 @@ public class ArucoMarker {
         }
     }
 
-    private final Namespace args;
-    private final JFrame frame;
-    private final JTextField statusText;
-    private final JTextField deviceField;
-    private final JLabel imageView;
-    private final AtomicReference<Status> status;
-    private RxMqttClient mqttClient;
-    private long retryInterval;
-    private Device qrDevice;
-    private RemoteDevice cameraDevice;
-    private long cameraInterval;
-    private long configureTimeout;
-    private int ledIntensity;
-    private int cameraFrameSize;
-
     /**
-     * Create the camera server
+     * Maps a camera event to a graphical icon presentation tuple.
+     * <p>
+     * If a valid marker identifier is recognised, this method renders visual indicators
+     * by drawing boundary polygons and overlaying the specific marker ID onto the image buffer
+     * before returning the final icon container.
+     * </p>
      *
-     * @param args the arguments
+     * @param event the camera snapshot event detailing marker data and image frames
+     * @return a tuple containing the generated image icon instance and the associated marker ID
      */
-    public ArucoMarker(Namespace args) {
-        this.args = args;
-        this.statusText = new JTextField();
-        this.deviceField = new JTextField();
-        this.frame = new JFrame();
-        this.imageView = new JLabel();
-        this.status = new AtomicReference<>(new Status(false, false, false));
-
-        statusText.setEditable(false);
-        statusText.setColumns(80);
-        statusText.setHorizontalAlignment(JTextField.CENTER);
-        statusText.setBackground(Color.BLACK);
-
-        deviceField.setEditable(false);
-        deviceField.setColumns(20);
-        deviceField.setHorizontalAlignment(JTextField.LEFT);
-
-        imageView.setPreferredSize(new Dimension(300, 300));
-
-        frame.setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
-        frame.setSize(800, 600);
-        frame.setTitle(Messages.getString("QRCode.title"));
-
-        createContent();
-
-        createFlow();
-    }
-
-    /**
-     * Capture image (resulting status: capturing)
-     */
-    private void captureImage() {
-        // Status capturing
-        Status s0 = status.getAndUpdate(s -> s.capturingImage(true));
-        if (!s0.capturingImage()) {
-            logger.atDebug().log("Sending ca command ...");
-            info(WARNING_COLOR, "Capturing image ...");
-            executeCameraCommand("ca", "", COMMAND_TIMEOUT)
-                    .subscribe(result ->
-                                    logger.atDebug().log("Capture command result [{}]", result),
-                            this::onCaptureError);
-        }
-    }
-
-    /**
-     * Close mqtt client
-     */
-    private void closeMqttClient() {
-        logger.atInfo().log("Closing mqtt client ...");
-        try {
-            mqttClient.close();
-        } catch (MqttException e) {
-            logger.atError().setCause(e).log("Error closing mqtt client");
-        }
-        logger.atInfo().log("Mqtt client closed");
-    }
-
-    /**
-     * Configure camera
-     */
-    private void configureCamera() {
-        Status s0 = status.getAndUpdate(s -> s.cameraConfiguring(true));
-        if (!s0.cameraConfiguring()) {
-            String msg = ledIntensity + "," + cameraFrameSize;
-            logger.atDebug().log("Sending cf command ...");
-            info(WARNING_COLOR, "Configuring camera ...");
-            executeCameraCommand("cf", msg, configureTimeout)
-                    .map(res -> res.equals(msg))
-                    .defaultIfEmpty(false)
-                    .subscribe(this::onCameraConfigResult,
-                            this::onCameraConfigError);
-        }
-    }
-
-    /**
-     * Creates content
-     */
-    private void createContent() {
-        new GridLayoutHelper<>(frame.getContentPane()).modify("insets,2,2")
-                .modify("at,0,0").add("Device")
-                .modify("at,1,0 hw,1 fill e").add(deviceField)
-                .modify("at,0,1 hspan,3 fill weight,1,1 center").add(new JScrollPane(imageView))
-                .modify("at,0,2 hspan,3 hfill noweight center").add(statusText);
-    }
-
-    /**
-     * Creates control flows
-     */
-    private void createFlow() {
-        frame.addWindowListener(new WindowAdapter() {
-            @Override
-            public void windowClosed(WindowEvent e) {
-                logger.atInfo().log("Closing ...");
-                status.updateAndGet(status1 -> status1.exit(true));
-                closeMqttClient();
-            }
-        });
-    }
-
-    /**
-     * Executes the command returning the command response
-     *
-     * @param command the command
-     * @param arg     the command argument
-     * @param timeout the execution timeout
-     */
-    private Maybe<String> executeCameraCommand(String command, String arg, long timeout) {
-        if (!mqttClient.isConnected()) {
-            return Maybe.empty();
-        } else {
-            try {
-                return cameraDevice.execute(StringCommand.create(command, arg), timeout);
-            } catch (Throwable e) {
-                notifyError("Error executing camera command", e);
-                return Maybe.error(e);
-            }
-        }
-    }
-
-    /**
-     * Display message info
-     *
-     * @param color the colour info
-     * @param fmt   the format
-     * @param args  the arguments
-     */
-    private void info(Color color, String fmt, Object... args) {
-        String text = format(fmt, args);
-        statusText.setForeground(color);
-        statusText.setText(text);
-        logger.atInfo().log(text);
-    }
-
-    /**
-     * Returns the image from mqtt message
-     *
-     * @param message the message
-     */
-    private BufferedImage message2Image(MqttMessage message) {
-        InputStream in = new ByteArrayInputStream(message.getPayload());
-        try {
-            return ImageIO.read(in);
-        } catch (IOException e) {
-            logger.atError().setCause(e).log("Error getting camera");
-            info(ERROR_COLOR, "Error getting camera");
-            return null;
-        }
-    }
-
-    /**
-     * Connects mqtt client (resulting status: connecting)
-     */
-    private void mqttConnect() {
-        if (!status.get().exit) {
-            logger.atInfo().log("Starting mqtt client ...");
-            info(WARNING_COLOR, "Starting mqtt client ...");
-            try {
-                mqttClient.connect().subscribe(this::onMqttConnected,
-                        this::onMqttConnectionError);
-            } catch (MqttException e) {
-                onMqttConnectionError(e);
-            }
-        }
-    }
-
-    /**
-     * Notify an error
-     *
-     * @param msg the error message
-     * @param e   the error cause
-     */
-    private void notifyError(String msg, Throwable e) {
-        info(ERROR_COLOR, msg);
-        logger.atError().setCause(e).log(msg);
-    }
-
-    /**
-     * Handles configuration error
-     *
-     * @param err the error cause
-     */
-    private void onCameraConfigError(Throwable err) {
-        status.updateAndGet(s -> s.cameraConfiguring(false));
-        notifyError("Error configuring camera", err);
-        waitRetryConfigure();
-    }
-
-    /**
-     * Handle the configuration result
-     *
-     * @param configured true if configured
-     */
-    private void onCameraConfigResult(boolean configured) {
-        status.updateAndGet(s -> s.cameraConfiguring(false));
-        if (configured) {
-            logger.atError().log("Camera configured");
-            waitCapture();
-        } else {
-            logger.atError().log("Error configuring camera");
-            waitRetryConfigure();
-        }
-    }
-
-    /**
-     * Handles camera image error
-     *
-     * @param error the error
-     */
-    private void onCameraError(Throwable error) {
-        notifyError("Error capturing image", error);
-    }
-
-    /**
-     * Handles the camera event
-     *
-     * @param event the camera event
-     */
-    private void onCameraEvent(CameraEvent event) {
+    private static Tuple2<ImageIcon, Integer> mapToIcon(CameraEvent event) {
         BufferedImage img = event.image();
         if (event.markerId() >= 0) {
             // Draws qr code bound
@@ -402,70 +180,192 @@ public class ArucoMarker {
             gr.setColor(MARKER_FRAME_COLOR);
             gr.draw(poly);
         }
-        qrDevice.publishData("am", event.line());
-        ImageIcon icon = new ImageIcon(img);
-        SwingUtilities.invokeLater(() -> {
-            imageView.setIcon(icon);
-            info(SUCCESS_COLOR, "Image captured makerId=" + event.markerId());
+        return Tuple2.of(new ImageIcon(img), event.markerId());
+    }
+
+    private final Namespace args;
+    private final JFrame frame;
+    private final JTextField statusText;
+    private final JTextField deviceField;
+    private final JLabel imageView;
+    private final AtomicBoolean exit;
+    private RxMqttClient mqttClient;
+    private long retryInterval;
+    private CaptureFSM fsm;
+
+    /**
+     * Initialises a new camera server instance with parsed command line arguments.
+     *
+     * @param args the parsed command line arguments configuration
+     */
+    public ArucoMarker(Namespace args) {
+        this.args = args;
+        this.statusText = new JTextField();
+        this.deviceField = new JTextField();
+        this.frame = new JFrame();
+        this.imageView = new JLabel();
+        this.exit = new AtomicBoolean(false);
+
+        statusText.setEditable(false);
+        statusText.setColumns(80);
+        statusText.setHorizontalAlignment(JTextField.CENTER);
+        statusText.setBackground(Color.BLACK);
+
+        deviceField.setEditable(false);
+        deviceField.setColumns(20);
+        deviceField.setHorizontalAlignment(JTextField.LEFT);
+
+        imageView.setPreferredSize(new Dimension(300, 300));
+
+        frame.setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);
+        frame.setSize(800, 600);
+        frame.setTitle(Messages.getString("QRCode.title"));
+
+        createContent();
+
+        createFlow();
+    }
+
+    /**
+     * Closes the MQTT client and finalises network resources safely.
+     */
+    private void closeMqttClient() {
+        logger.atInfo().log("Closing mqtt client ...");
+        try {
+            mqttClient.close();
+        } catch (MqttException e) {
+            logger.atError().setCause(e).log("Error closing mqtt client");
+        }
+        logger.atInfo().log("Mqtt client closed");
+    }
+
+    /**
+     * Creates and layouts the graphical user interface elements within the frame.
+     */
+    private void createContent() {
+        /*
+            | Device | device field |
+            |        image          |
+            |        status         |
+         */
+        new GridLayoutHelper<>(frame.getContentPane()).modify("insets,2,2")
+                .modify("at,0,0").add("Device")
+                .modify("at,1,0 hw,1 fill e").add(deviceField)
+                .modify("at,0,1 hspan,2 fill weight,1,1 center").add(new JScrollPane(imageView))
+                .modify("at,0,2 hspan,2 hfill noweight center").add(statusText);
+    }
+
+    /**
+     * Establishes window event listeners and reactive control flows.
+     */
+    private void createFlow() {
+        frame.addWindowListener(new WindowAdapter() {
+            @Override
+            public void windowClosing(WindowEvent e) {
+                onWindowClosing(e);
+            }
         });
     }
 
     /**
-     * Handle the hi message from camera device
+     * Displays a formatted status message within the user interface using a specified text colour.
      *
-     * @param ignored the message
+     * @param color the specific text colour profile info
+     * @param fmt   the string format pattern to render
+     * @param args  the arguments to match the specified format pattern
      */
-    private void onCameraHiMessage(String ignored) {
-        logger.atInfo().log("Camera hi message");
-        configureCamera();
+    private void info(Color color, String fmt, Object... args) {
+        String text = format(fmt, args);
+        statusText.setForeground(color);
+        statusText.setText(text);
+        logger.atInfo().log(text);
     }
 
     /**
-     * Handle capture command error
-     *
-     * @param error the error
+     * Dispatches an asynchronous initialisation request to connect the MQTT client.
+     * <p>
+     * If the shutdown flag is inactive, this method updates the status text components
+     * on the main window thread and attempts to establish a communication channel
+     * with the messaging broker.
+     * </p>
      */
-    private void onCaptureError(Throwable error) {
-        status.updateAndGet(s -> s.capturingImage(false));
-        notifyError("Error capturing image", error);
-        waitRetryConfigure();
+    private void mqttConnect() {
+        if (!exit.get()) {
+            logger.atInfo().log("Starting mqtt client ...");
+            SwingUtilities.invokeLater(() ->
+                    info(WARNING_COLOR, "Starting mqtt client ...")
+            );
+            try {
+                mqttClient.connect().subscribe(this::onMqttConnected,
+                        this::onMqttConnectionError);
+            } catch (MqttException e) {
+                onMqttConnectionError(e);
+            }
+        }
     }
 
     /**
-     * Handle image captured
+     * Intercepts system anomalies and notifies the user interface of an operational error.
+     * <p>
+     * Logs the fault context parameters using the internal engine framework
+     * and asynchronously updates the status bar colour configuration.
+     * </p>
      *
-     * @param image the image
+     * @param msg the descriptive text message detailing the intercepted failure
+     * @param e   the underlying exception or error instance causing the disruption
      */
-    private void onImage(BufferedImage image) {
-        status.updateAndGet(s -> s.capturingImage(false));
-        CameraEvent event = ArucoReader.captureMarker(image);
-        onCameraEvent(event);
-        waitCapture();
+    private void notifyError(String msg, Throwable e) {
+        logger.atError().setCause(e).log(msg);
+        SwingUtilities.invokeLater(() ->
+                info(ERROR_COLOR, msg));
     }
 
     /**
-     * Handles on mqtt connection event
+     * Updates the user interface view with the processed image icon frame.
+     * <p>
+     * This method renders the updated icon and logs specific target summary details
+     * based on whether a valid marker identifier was detected.
+     * </p>
      *
-     * @param connected true if connected
+     * @param t a tuple wrapping the target image icon and the corresponding marker identifier
+     */
+    private void onImageIcon(Tuple2<ImageIcon, Integer> t) {
+        imageView.setIcon(t.v1());
+        if (t.v2() >= 0) {
+            info(SUCCESS_COLOR, "makerId [%d]", t.v2());
+        } else {
+            info(SUCCESS_COLOR, "No marker");
+        }
+    }
+
+    /**
+     * Responds to an MQTT broker connection event.
+     * <p>
+     * Upon a successful network subscription, this method updates the text components
+     * on the main window thread and initialises the core finite state machine behaviour.
+     * </p>
+     *
+     * @param connected true if the network communications client is active and online
      */
     private void onMqttConnected(boolean connected) {
         logger.atInfo().log("Mqtt client connected");
-        logger.atInfo().log("Subscribing mqtt topic ...");
+        SwingUtilities.invokeLater(() ->
+                info(SUCCESS_COLOR, "Mqtt client connected"));
         try {
-            qrDevice.subscribe();
-            qrDevice.publishData("hi", "");
-            logger.atInfo().log("Device {} subscribed", qrDevice.subCommandTopic());
+            fsm.start();
         } catch (MqttException e) {
-            logger.atError().setCause(e).log("Error subscribing device");
-            info(ERROR_COLOR, "Error subscribing topic");
+            notifyError("Error starting finite state machine", e);
         }
-        configureCamera();
     }
 
     /**
-     * Handles the mqtt client connection error
+     * Handles exceptions and communication failures thrown by the underlying MQTT network client.
+     * <p>
+     * Logs the fault context parameters and schedules an automated retry attempt
+     * after a specific interval using an background scheduler.
+     * </p>
      *
-     * @param error the error
+     * @param error the exception detailing the network channel communication drop cause
      */
     private void onMqttConnectionError(Throwable error) {
         logger.atError().setCause(error).log("Error connecting mqtt client");
@@ -474,31 +374,57 @@ public class ArucoMarker {
     }
 
     /**
-     * Handle wait retry configuration timeout
+     * Executes final window resource deallocation tasks when the application closes down.
      */
-    private void onRetryConfigTimeout() {
-        configureCamera();
+    private void onShutdown() {
+        logger.atInfo().log("Shut down completed");
+        frame.dispose();
     }
 
     /**
-     * Handle the wait capture timeout
+     * Intercepts window closing notification events to coordinate a safe application shutdown sequence.
+     * <p>
+     * This handler triggers the reactive clean-up pipeline, ensuring that the background
+     * finite state machine is completely finalised and the underlying MQTT messaging client connection
+     * is disconnected before releasing window components.
+     * </p>
+     *
+     * @param e the window event trigger context instance
      */
-    private void onWaitCapture() {
-        captureImage();
+    private void onWindowClosing(WindowEvent e) {
+        logger.atInfo().log("Closing ...");
+        exit.set(true);
+        closeMqttClient();
+        fsm.close();
+        fsm.readClosed()
+                .subscribeOn(Schedulers.computation())
+                .doOnComplete(() ->
+                        logger.atInfo().log("FSM closed")
+                )
+                .andThen(mqttClient.closed())
+                .doOnComplete(() ->
+                        logger.atInfo().log("mqtt closed")
+                )
+                .observeOn(SwingSchedulers.edt())
+                .subscribe(this::onShutdown);
     }
 
     /**
-     * Runs the application
+     * Runs the main server application infrastructure context pipeline.
+     * <p>
+     * It initialises the configuration file values, validates the schema structure, configures
+     * local and remote messaging clients, maps window layouts, and establishes the core reactive tracking channels.
+     * </p>
+     *
+     * @throws IOException   if file transactions or resource parsing fails
+     * @throws MqttException if the communications framework fails to initialise properly
      */
     private void run() throws IOException, MqttException {
         JsonNode config = fromFile(args.getString("config"));
         JsonSchemas.instance().validateOrThrow(config, QRCODE_SCHEMA_YML);
-        this.cameraInterval = Locator.locate("cameraInterval").getNode(config).asLong(DEFAULT_CAMERA_INTERVAL);
-        this.cameraFrameSize = Locator.locate("frameSize").getNode(config).asInt(DEFAULT_FRAME_SIZE);
-        this.ledIntensity = Locator.locate("ledIntensity").getNode(config).asInt(DEFAULT_LED_INTENSITY);
-        this.configureTimeout = Locator.locate("configureTimeout").getNode(config).asLong(DEFAULT_CONFIGURE_TIMEOUT);
 
-        // Creates qrcode mqtt client
+        int httpConnectTimeout = Locator.locate("httpConnectTimeout").getNode(config).asInt(DEFAULT_HTTP_CONNECTION_TIMEOUT);
+        int httpReadTimeout = Locator.locate("httpReadTimeout").getNode(config).asInt(DEFAULT_HTTP_READ_TIMEOUT);
         String serverUrl = Locator.locate("brokerUrl").getNode(config).asText(DEFAULT_BROKER_URL);
         String userName = Locator.locate("mqttUser").getNode(config).asText();
         String password = Locator.locate("mqttPassword").getNode(config).asText();
@@ -506,82 +432,47 @@ public class ArucoMarker {
         String deviceName = Locator.locate("deviceName").getNode(config).asText(DEFAULT_DEVICE_NAME);
         String deviceVersion = Locator.locate("deviceVersion").getNode(config).asText(DEFAULT_DEVICE_VERSION);
         this.retryInterval = Locator.locate("retryInterval").getNode(config).asLong(DEFAULT_RETRY_INTERVAL);
-        this.mqttClient = RxMqttClient.create(serverUrl, null, userName, password);
-        this.qrDevice = new Device(deviceName, deviceId, deviceVersion, mqttClient);
-
-        // Creates camera mqtt client
         String cameraId = Locator.locate("cameraId").getNode(config).asText();
         String cameraName = Locator.locate("cameraName").getNode(config).asText(DEFAULT_CAMERA_NAME);
         String cameraVersion = Locator.locate("cameraVersion").getNode(config).asText(DEFAULT_CAMERA_VERSION);
-        this.cameraDevice = new RemoteDevice(cameraName, cameraId, cameraVersion, mqttClient);
-        deviceField.setText(deviceName + "/" + deviceId + "/" + deviceVersion);
-        cameraDevice.readData("img", this::message2Image)
-                .subscribe(this::onImage);
 
-        cameraDevice.readData("hi", m -> new String(m.getPayload()))
-                .subscribe(this::onCameraHiMessage,
-                        this::onCameraError);
+        // Set http timing
+        CameraImageFetcher.configure(httpConnectTimeout, httpReadTimeout);
+
+        // Creates qrcode mqtt client
+        this.mqttClient = RxMqttClient.create(serverUrl, null, userName, password);
+
+        // Create remote camera device
+        RemoteDevice cameraDevice = new RemoteDevice(cameraName + "/" + cameraId + "/" + cameraVersion, mqttClient);
+
+        // Creates aruco device
+        Device arucoDevice = new Device(deviceName, deviceId, deviceVersion, mqttClient);
+        deviceField.setText(deviceName + "/" + deviceId + "/" + deviceVersion);
+
+        // Creates finite state machine
+        CaptureFSMConfig fsmConfig = CaptureFSMConfig.fromJson(config, Locator.root(), arucoDevice, cameraDevice);
+        this.fsm = WheellyCamCaptureFSM.create(fsmConfig);
+
         frame.setVisible(true);
+
+        fsm.readCameraEvents()
+                .map(ArucoMarker::mapToIcon)
+                .observeOn(SwingSchedulers.edt())
+                .subscribe(this::onImageIcon);
+        fsm.readChangeStates()
+                .map(state -> state.getClass().getSimpleName())
+                .distinct()
+                .observeOn(SwingSchedulers.edt())
+                .subscribe(txt -> {
+                    Color color = switch (txt) {
+                        case "IdleState" -> SUCCESS_COLOR;
+                        case "CapturingState" -> WARNING_COLOR;
+                        default -> ERROR_COLOR;
+                    };
+                    info(color, "%s", txt);
+                });
+
         Utils.center(frame);
         mqttConnect();
-    }
-
-    /**
-     * Wait for capture interval
-     */
-    private void waitCapture() {
-        Completable.timer(cameraInterval, TimeUnit.MILLISECONDS)
-                .subscribe(this::onWaitCapture);
-    }
-
-    /**
-     * Wait retry configuration (resulting status: waitRetryConfig)
-     */
-    private void waitRetryConfigure() {
-        Completable.timer(retryInterval, TimeUnit.MILLISECONDS)
-                .subscribe(this::onRetryConfigTimeout);
-    }
-
-    /**
-     * The server status
-     *
-     * @param exit              true if exit
-     * @param capturingImage    true if capturing image
-     * @param cameraConfiguring true if configuring camera
-     */
-    public record Status(boolean exit, boolean capturingImage, boolean cameraConfiguring) {
-        /**
-         * Returns the status with camera configuring
-         *
-         * @param cameraConfiguring true if camera is configuring
-         */
-        public Status cameraConfiguring(boolean cameraConfiguring) {
-            return this.cameraConfiguring != cameraConfiguring
-                    ? new Status(exit, capturingImage, cameraConfiguring)
-                    : this;
-        }
-
-        /**
-         * Returns the status with camera capturing
-         *
-         * @param capturingImage true if camera is capturing
-         */
-        public Status capturingImage(boolean capturingImage) {
-            return this.capturingImage != capturingImage
-                    ? new Status(exit, capturingImage, cameraConfiguring)
-                    : this;
-        }
-
-        /**
-         * Returns the status with exit value
-         *
-         * @param exit true if exit
-         */
-        public Status exit(boolean exit) {
-            return this.exit != exit
-                    ? new Status(exit, capturingImage, cameraConfiguring)
-                    : this;
-        }
-
     }
 }

@@ -1,13 +1,13 @@
 ---
 $schema: https://json-schema.org/draft/2020-12/schema
-$id: https://mmarini.org/wheelly/qrcode-schema-0.4
+$id: https://mmarini.org/wheelly/aruco-markers-schema-0.1
 title: Wheelly camera schema
 # qrcode schema
 type: object
 properties:
   $schema:
     type: string
-    const: https://mmarini.org/wheelly/qrcode-schema-0.4
+    const: https://mmarini.org/wheelly/aruco-markers-schema-0.1
   retryInterval:
     type: integer
     minimum: 1
@@ -29,20 +29,46 @@ properties:
     type: string
   cameraVersion:
     type: string
-  cameraInterval:
+  captureInterval:
     type: integer
     minimum: 1
-  configureTimeout:
+  watchDogInterval:
     type: integer
     minimum: 1
   frameSize:
     type: integer
+    minimum: 5
+    maximum: 13
+  vflip:
+    type: integer
     minimum: 0
-    maximum: 12
-  ledIntensity:
+    maximum: 1
+  hmirror:
+    type: integer
+    minimum: 0
+    maximum: 1
+  brigthness:
+    type: integer
+    minimum: -2
+    maximum: 2
+  contrast:
+    type: integer
+    minimum: -2
+    maximum: 2
+  saturation:
+    type: integer
+    minimum: -2
+    maximum: 2
+  flashIntensity:
     type: integer
     minimum: 0
     maximum: 255
+  httpConnectTimeout:
+    type: integer
+    minimum: 0
+  httpReadTimeout:
+    type: integer
+    minimum: 0
 required:
   - $schema
   - mqttUser

@@ -74,8 +74,8 @@ class DeviceTest {
         sub.assertComplete();
         sub.assertNoErrors();
         sub.assertValueCount(1);
-        assertEquals("sens/test/1/v0/ts", sub.values().getFirst()._1());
-        assertEquals("data", new String(sub.values().getFirst()._2().getPayload()));
+        assertEquals("sens/test/1/v0/ts", sub.values().getFirst().v1());
+        assertEquals("data", new String(sub.values().getFirst().v2().getPayload()));
     }
 
     @Test
@@ -102,10 +102,10 @@ class DeviceTest {
         sub.assertComplete();
         sub.assertNoErrors();
         sub.assertValueCount(2);
-        assertEquals("cmd/test/1/v0/ts", sub.values().getFirst()._1());
-        assertEquals("arg", new String(sub.values().getFirst()._2().getPayload()));
-        assertEquals("cmd/test/1/v0/ts/res", sub.values().get(1)._1());
-        assertEquals("ARG", new String(sub.values().get(1)._2().getPayload()));
+        assertEquals("cmd/test/1/v0/ts", sub.values().getFirst().v1());
+        assertEquals("arg", new String(sub.values().getFirst().v2().getPayload()));
+        assertEquals("cmd/test/1/v0/ts/res", sub.values().get(1).v1());
+        assertEquals("ARG", new String(sub.values().get(1).v2().getPayload()));
     }
 
     @Test
@@ -132,9 +132,9 @@ class DeviceTest {
         sub.assertComplete();
         sub.assertNoErrors();
         sub.assertValueCount(2);
-        assertEquals("cmd/test/1/v0/ts", sub.values().getFirst()._1());
-        assertEquals("arg", new String(sub.values().getFirst()._2().getPayload()));
-        assertEquals("cmd/test/1/v0/ts/err", sub.values().get(1)._1());
-        assertEquals("Not implemented", new String(sub.values().get(1)._2().getPayload()));
+        assertEquals("cmd/test/1/v0/ts", sub.values().getFirst().v1());
+        assertEquals("arg", new String(sub.values().getFirst().v2().getPayload()));
+        assertEquals("cmd/test/1/v0/ts/err", sub.values().get(1).v1());
+        assertEquals("Not implemented", new String(sub.values().get(1).v2().getPayload()));
     }
 }

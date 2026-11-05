@@ -30,7 +30,6 @@ package org.mmarini.wheelly.mqtt;
 
 import io.reactivex.rxjava3.core.Completable;
 import io.reactivex.rxjava3.schedulers.Schedulers;
-import org.eclipse.paho.client.mqttv3.MqttException;
 import org.eclipse.paho.client.mqttv3.MqttMessage;
 import org.mmarini.Function2Throws;
 import org.mmarini.Tuple2;
@@ -117,7 +116,7 @@ public class Device {
      * @param command the command tuple with topics and payload
      */
     void execute(Tuple2<String, String> command) {
-        execute(command._1(), command._2());
+        execute(command.v1(), command.v2());
     }
 
     /**
@@ -162,11 +161,10 @@ public class Device {
     /**
      * Subscribes for command execution
      *
-     * @throws MqttException in case of error
      */
-    public Device subscribe() throws MqttException {
+    public Device subscribe() {
         client.subscribe(subCommandTopic(), 1)
-                .map(t -> t.setV2(new String(t._2().getPayload())))
+                .map(t -> t.v2(new String(t.v2().getPayload())))
                 .observeOn(Schedulers.computation())
                 .subscribe(this::execute);
         return this;
