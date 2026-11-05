@@ -36,26 +36,50 @@ import java.util.Locale;
 import static java.lang.String.format;
 
 /**
- * Stores the Camera Event properties
+ * Stores the properties of a camera event snapshot.
  *
- * @param timestamp the event timestamp
- * @param markerId    the qr code (? if unrecognized)
- * @param width     the camera image width
- * @param height    the camera image height
- * @param points    the qr code vertices
- * @param image     the image
+ * @param timestamp the epoch timestamp when the event was captured
+ * @param markerId  the identified marker ID, or negative if unrecognised
+ * @param width     the width of the processed camera image
+ * @param height    the height of the processed camera image
+ * @param points    the matrix containing the vertices of the detected marker
+ * @param line      the text data representing the serialised event details
+ * @param image     the buffered image instance of the capture
  */
 public record CameraEvent(long timestamp, int markerId, int width, int height, Mat points, String line,
                           BufferedImage image) {
+
+    /**
+     * Creates and initialises a new camera event instance.
+     * <p>
+     * This factory method automatically serialises the marker properties
+     * into a single formatted line block.
+     * </p>
+     *
+     * @param timestamp the event timestamp
+     * @param markerId  the ID of the target marker
+     * @param width     the image width
+     * @param height    the image height
+     * @param points    the coordinate points of the marker
+     * @param image     the captured image data
+     * @return the initialised camera event object
+     */
     public static CameraEvent create(long timestamp, int markerId, int width, int height, Mat points, BufferedImage image) {
-        String line = qrCode2String(timestamp, markerId, width, height, points);
+        String line = eventToString(timestamp, markerId, width, height, points);
         return new CameraEvent(timestamp, markerId, width, height, points, line, image);
     }
 
     /**
-     * Returns the string of qrcode result
+     * Converts the ArUco marker result attributes into a serialised string.
+     *
+     * @param timestamp the event timestamp
+     * @param markerId  the identifier of the marker
+     * @param width     the frame width
+     * @param height    the frame height
+     * @param points    the spatial vertex points matrix
+     * @return a structured string format representing the marker data
      */
-    private static String qrCode2String(long timestamp, int markerId, int width, int height, Mat points) {
+    private static String eventToString(long timestamp, int markerId, int width, int height, Mat points) {
         return markerId < 0
                 ? format(Locale.ENGLISH, "%d,-1,%d,%d,0,0,0,0,0,0,0,0",
                 timestamp,

@@ -163,9 +163,9 @@ public interface ParallelProcess {
                     .runOn(scheduler)
                     .map(t -> {
                         try {
-                            return t.setV2(t._2().get());
+                            return t.v2(t.v2().get());
                         } catch (Throwable ex) {
-                            logger.atError().setCause(ex).log("Error processing task {}", t._1());
+                            logger.atError().setCause(ex).log("Error processing task {}", t.v1());
                             throw ex;
                         }
                     })

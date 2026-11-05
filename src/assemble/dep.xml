@@ -1,8 +1,7 @@
 <!--
+  ~ Copyright (c) 2026 Marco Marini, marco.marini@mmarini.org
   ~
-  ~ Copyright (c) )2022 Marco Marini, marco.marini@mmarini.org
-  ~
-  ~ Permission is hereby granted, free of charge, to any person
+  ~  Permission is hereby granted, free of charge, to any person
   ~ obtaining a copy of this software and associated documentation
   ~ files (the "Software"), to deal in the Software without
   ~ restriction, including without limitation the rights to use,
@@ -62,13 +61,20 @@
             <filtered>true</filtered>
         </fileSet>
         <fileSet>
-            <directory>src/bin</directory>
-            <excludes>
-                <exclude>*.sh</exclude>
-                <exclude>*.cmd</exclude>
-            </excludes>
+            <directory>schemas</directory>
+            <outputDirectory>schemas</outputDirectory>
+            <includes>
+                <include>*.yml</include>
+            </includes>
+        </fileSet>
+        <fileSet>
+            <directory>bin</directory>
+            <includes>
+                <include>*.sh</include>
+                <include>*.cmd</include>
+            </includes>
             <outputDirectory>bin</outputDirectory>
-            <filtered>false</filtered>
+            <filtered>true</filtered>
         </fileSet>
     </fileSets>
     <dependencySets>

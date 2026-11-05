@@ -42,56 +42,126 @@ import java.awt.image.DataBufferByte;
 import java.util.ArrayList;
 import java.util.List;
 
+import static java.lang.Math.sqrt;
+
 /**
- * Controls the webcam
- * -Djava.library.path=C:\opencv\build\java\x64
+ * Coordinates webcam control and video stream analysis.
+ * <p>
+ * This class provides specialised mechanisms to process incoming frames
+ * and handles native library initialisation.
+ * </p>
+ * <p>
+ * Configuration note: requires <code>-Djava.library.path=C:\opencv\build\java\x64</code>
+ * </p>
  */
 public abstract class ArucoReader {
 
-    public static final int SIZE_96X96 = 0;
-    public static final int SIZE_160X120 = 1;
-    public static final int SIZE_176x144 = 2;
-    public static final int SIZE_240X176 = 3;
-    public static final int SIZE_240X240 = 4;
-    public static final int SIZE_320X240 = 5;
-    public static final int SIZE_400X296 = 5;
-    public static final int SIZE_480x320 = 7;
-    public static final int SIZE_640X480 = 8;
-    public static final int SIZE_800X600 = 9;
-    public static final int SIZE_1024X768 = 10;
-    public static final int SIZE_1280X720 = 11;
-    public static final int SIZE_1280X1024 = 12;
-    public static final int SIZE_1600X1200 = 13;
     static final Logger logger = LoggerFactory.getLogger(ArucoReader.class);
+    private static final Dictionary dictionary = Objdetect.getPredefinedDictionary(Objdetect.DICT_4X4_50);
 
-    static {
-        System.loadLibrary("opencv_java4100");
+    /**
+     * Calculates the total surface area of a four-cornered marker represented by a Mat.
+     * <p>
+     * The method splits the quadrilateral into two adjacent triangles sharing a common diagonal
+     * (vertices 0-2), calculates the area of each using Heron's formula, and sums them up.
+     * </p>
+     *
+     * @param mat the OpenCV matrix containing the coordinates of the four corners
+     * @return the total calculated area of the marker
+     */
+    private static double area(Mat mat) {
+        return heron(mat.get(0, 0), mat.get(0, 1), mat.get(0, 2))
+                + heron(mat.get(0, 0), mat.get(0, 2), mat.get(0, 3));
     }
 
     /**
-     * Returns the captured qr code if any
+     * Processes a buffered frame to spot and analyse any present ArUco markers.
+     * <p>
+     * The framework parses raw pixel buffers into an optimised matrix format
+     * to perform precise detection of corners and identifiers.
+     * </p>
+     *
+     * @param img the raw image frame captured from the input device
+     * @return an initialised event containing the parsed marker data and snapshot info
      */
     static public CameraEvent captureMarker(BufferedImage img) {
         byte[] pixels = ((DataBufferByte) img.getRaster().getDataBuffer()).getData();
         Mat image = new Mat(img.getHeight(), img.getWidth(), CvType.CV_8UC(3));
         image.put(0, 0, pixels);
         long timestamp = System.currentTimeMillis();
-        Dictionary dictioanary = Objdetect.getPredefinedDictionary(Objdetect.DICT_4X4_50);
         DetectorParameters params = new DetectorParameters();
-        ArucoDetector detector = new ArucoDetector(dictioanary, params);
+        ArucoDetector detector = new ArucoDetector(dictionary, params);
 
         List<Mat> edges = new ArrayList<>(); // four corners markers
         Mat ids = new Mat();                  // found marker ids
         List<Mat> invalid = new ArrayList<>(); // invalid markers
 
         detector.detectMarkers(image, edges, ids, invalid);
+        image.release();
         if (!ids.empty()) {
-            double[] idVal = ids.get(0, 0);
-            int markerId = (int) idVal[0];
-            logger.atInfo().log("markerId: {}", markerId);
-            logger.atInfo().log("edges: {}", edges);
-            return CameraEvent.create(timestamp, markerId, image.width(), image.height(), edges.getFirst(), img);
+            int n = ids.rows();
+            int markerIdx = 0;
+            if (n > 1) {
+                // Find the bigest marker
+                double bigest = -1;
+                for (int i = 0; i < edges.size(); i++) {
+                    double area = area(edges.get(i));
+                    if (area > bigest) {
+                        bigest = area;
+                        markerIdx = i;
+                    }
+                }
+            }
+            int markerId = (int) ids.get(markerIdx, 0)[0];
+            logger.atDebug().log("markerId: {}", markerId);
+            logger.atDebug().log("edges: {}", edges);
+            ids.release();
+            return CameraEvent.create(timestamp, markerId, img.getWidth(), img.getHeight(), edges.get(markerIdx), img);
         }
-        return CameraEvent.create(timestamp, -1, image.width(), image.height(), null, img);
+        ids.release();
+        return CameraEvent.create(timestamp, -1, img.getWidth(), img.getHeight(), null, img);
+    }
+
+    /**
+     * Calculates the area of a triangle defined by three 2D vertices using Heron's formula.
+     * <p>
+     * This method computes the Euclidean distance between each pair of coordinate points
+     * to determine the three side lengths, then delegates the area calculation.
+     * </p>
+     *
+     * @param p0 the coordinates of the first vertex as an array of minimum [x, y]
+     * @param p1 the coordinates of the second vertex as an array of minimum [x, y]
+     * @param p2 the coordinates of the third vertex as an array of minimum [x, y]
+     * @return the calculated area of the triangle
+     */
+    private static double heron(double[] p0, double[] p1, double[] p2) {
+        double dx01 = p1[0] - p0[0];
+        double dy01 = p1[1] - p0[1];
+        double dx02 = p2[0] - p0[0];
+        double dy02 = p2[1] - p0[1];
+        double dx12 = p2[0] - p1[0];
+        double dy12 = p2[1] - p1[1];
+        double a = sqrt(dx01 * dx01 + dy01 * dy01);
+        double b = sqrt(dx02 * dx02 + dy02 * dy02);
+        double c = sqrt(dx12 * dx12 + dy12 * dy12);
+        return heron(a, b, c);
+    }
+
+    /**
+     * Calculates the area of a triangle given its three side lengths using Heron's formula.
+     * <p>
+     * The method first computes the semi-perimeter of the triangle and then applies the formula
+     * under the square root. If the provided sides do not form a valid triangle,
+     * this method returns {@code 0.0}.
+     * </p>
+     *
+     * @param a the length of the first side
+     * @param b the length of the second side
+     * @param c the length of the third side
+     * @return the calculated area of the triangle, or {@code 0.0} if the sides are invalid
+     */
+    private static double heron(double a, double b, double c) {
+        double p = (a + b + c) / 2;
+        return sqrt(p * (p - a) * (p - b) * (p - c));
     }
 }

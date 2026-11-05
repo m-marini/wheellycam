@@ -43,34 +43,34 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
-import static java.lang.String.format;
 import static java.util.Objects.requireNonNull;
 
 /**
- * Handles the remote device allowing to receive the sensor data and to send commands
+ * Handles the remote device allowing to receive the sensor data and to send command
  */
 public class RemoteDevice {
     private static final Logger logger = LoggerFactory.getLogger(RemoteDevice.class);
-    private final String name;
     private final String id;
-    private final String version;
     private final RxMqttClient client;
     private final Map<String, Flowable<Tuple2<String, MqttMessage>>> commandReplies;
 
     /**
      * Creates the remote device
      *
-     * @param name    the device name
-     * @param id      the device id
-     * @param version the device api version
-     * @param client  the mqtt client
+     * @param id     the device id
+     * @param client the mqtt client
      */
-    public RemoteDevice(String name, String id, String version, RxMqttClient client) {
-        this.name = requireNonNull(name);
+    public RemoteDevice(String id, RxMqttClient client) {
         this.id = requireNonNull(id);
-        this.version = requireNonNull(version);
         this.client = requireNonNull(client);
         this.commandReplies = new HashMap<>();
+    }
+
+    /**
+     * Returns the mqtt client
+     */
+    public RxMqttClient client() {
+        return client;
     }
 
     /**
@@ -84,14 +84,7 @@ public class RemoteDevice {
      * Returns the command topic path
      */
     public String commandTopicPath() {
-        return "cmd/" + deviceTopic();
-    }
-
-    /**
-     * Returns the sensor topic path
-     */
-    public String deviceTopic() {
-        return format("%s/%s/%s", name, id, version);
+        return "cmd/" + id();
     }
 
     /**
@@ -110,10 +103,10 @@ public class RemoteDevice {
         Maybe<R> reply = replyConnectable.firstElement()
                 .timeout(timeout, TimeUnit.MILLISECONDS)
                 .flatMap(t -> {
-                    if (t._1().equals(errorTopic)) {
-                        return Maybe.error(new DeviceException(new String(t._2().getPayload())));
+                    if (t.v1().equals(errorTopic)) {
+                        return Maybe.error(new DeviceException(new String(t.v2().getPayload())));
                     }
-                    R response = command.response(t._2());
+                    R response = command.response(t.v2());
                     return response != null
                             ? Maybe.just(response)
                             : Maybe.empty();
@@ -138,6 +131,13 @@ public class RemoteDevice {
         return result;
     }
 
+    /**
+     * Returns the sensor topic path
+     */
+    public String id() {
+        return id;
+    }
+
     public boolean isConnected() {
         return client.isConnected();
     }
@@ -146,7 +146,7 @@ public class RemoteDevice {
      * Returns the flow of cmd messages
      */
     public Flowable<Tuple2<String, MqttMessage>> readAllTopics() {
-        return client.subscribe("+/" + deviceTopic() + "/#", 0);
+        return client.subscribe("+/" + id() + "/#", 0);
     }
 
     /**
@@ -160,22 +160,19 @@ public class RemoteDevice {
     public <T> Flowable<T> readData(String dataType, Function<MqttMessage, T> factory) {
         String topic = sensorTopicPath() + "/" + dataType;
         return client.connected()
-                .flatMapPublisher(connected -> {
-                    logger.atDebug().log("Subscribing for data {}", topic);
-                    return connected
-                            ? client.subscribe(topic, 0)
-                            : Flowable.empty();
-                })
+                .toSingleDefault(true)
+                .flatMapPublisher(x ->
+                        client.subscribe(topic, 0))
                 .flatMap(t -> {
-                    logger.atDebug().log("Data {}", t._2());
-                    T result = factory.apply(t._2());
+                    logger.atDebug().log("Data {}", t.v2());
+                    T result = factory.apply(t.v2());
                     return result == null
                             ? Flowable.empty()
                             : Flowable.just(result);
                 })
                 .publish()
                 .autoConnect()
-                .observeOn(Schedulers.computation())
+                .observeOn(Schedulers.io())
                 .doOnSubscribe(x -> logger.atDebug().log("Subscribe flow {}", topic))
                 .doOnNext(x -> logger.atDebug().log("Message {}", x));
     }
@@ -184,6 +181,6 @@ public class RemoteDevice {
      * Returns the sensor topic path
      */
     public String sensorTopicPath() {
-        return "sens/" + deviceTopic();
+        return "sens/" + id();
     }
 }

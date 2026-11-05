@@ -1,5 +1,5 @@
 ---
-$schema: https://mmarini.org/wheelly/qrcode-schema-0.4
+$schema: https://mmarini.org/wheelly/aruco-markers-schema-0.1
 #brokerUrl: tcp://localhost:1883
 mqttUser: wheellyj
 mqttPassword: wheellyj
@@ -7,11 +7,16 @@ mqttPassword: wheellyj
 #deviceId: 0123456789abc
 deviceVersion: v1
 #cameraName: wheellycam
-#cameraId: 38182BB1A31C
-cameraId: E05A1BE2FE04
+cameraId: +
+#cameraId: 38182bb1a31c
+#cameraId: e05a1be2fe04
 #cameraVersion: v0
-ledIntensity: 255
-frameSize: 11
-cameraInterval: 1000
+flashIntensity: 255
+frameSize: 8
+captureInterval: 1000
 retryInterval: 3000
-configureTimeout: 3000
+watchDogInterval: 30000
+httpConnectTimeout: 10
+httpReadTimeout: 10
+vflip: 1
+hmirror: 1
