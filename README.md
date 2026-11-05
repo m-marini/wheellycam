@@ -2,6 +2,10 @@ The repository contain the code for the qrcode recogntion from Wheelly camera
 
 See https://github.com/m-marini/wheellyj
 
+## Release 0.6.0
+
+- Aruco marker recognition and http image pull
+
 ## Release 0.5.0
 
 - Add camera control
