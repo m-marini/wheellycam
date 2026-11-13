@@ -43,14 +43,13 @@ import org.mmarini.swing.GridLayoutHelper;
 import org.mmarini.wheelly.mqtt.Device;
 import org.mmarini.wheelly.mqtt.RemoteDevice;
 import org.mmarini.wheelly.mqtt.RxMqttClient;
-import org.mmarini.wheellycam.apis.CameraEvent;
+import org.mmarini.wheelly.protobuf.aruco.MarkerEvent;
 import org.mmarini.wheellycam.apis.CameraImageFetcher;
 import org.mmarini.wheellycam.fsm.CaptureFSM;
 import org.mmarini.wheellycam.fsm.CaptureFSMConfig;
 import org.mmarini.wheellycam.fsm.WheellyCamCaptureFSM;
 import org.mmarini.wheellycam.swing.Utils;
 import org.mmarini.yaml.Locator;
-import org.opencv.core.Mat;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -60,11 +59,11 @@ import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
+import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-import static java.lang.Math.round;
 import static java.lang.String.format;
 import static org.mmarini.wheellycam.apis.CameraImageFetcher.DEFAULT_HTTP_CONNECTION_TIMEOUT;
 import static org.mmarini.wheellycam.apis.CameraImageFetcher.DEFAULT_HTTP_READ_TIMEOUT;
@@ -158,29 +157,29 @@ public class ArucoMarker {
      * before returning the final icon container.
      * </p>
      *
-     * @param event the camera snapshot event detailing marker data and image frames
+     * @param tuple the camera snapshot event detailing marker data and image frames
      * @return a tuple containing the generated image icon instance and the associated marker ID
      */
-    private static Tuple2<ImageIcon, Integer> mapToIcon(CameraEvent event) {
-        BufferedImage img = event.image();
-        if (event.markerId() >= 0) {
+    private static Tuple2<ImageIcon, Integer> mapToIcon(Tuple2<MarkerEvent, BufferedImage> tuple) {
+        BufferedImage img = tuple.v2();
+        MarkerEvent event = tuple.v1();
+        if (event.getMarkerId() >= 0) {
             // Draws qr code bound
-            Mat pts = event.points();
+            List<Integer> pts = event.getCoordsList();
             Graphics2D gr = img.createGraphics();
             Polygon poly = new Polygon();
             gr.setStroke(MARKER_STROKE);
             gr.setFont(MARKER_FONT);
             for (int i = 0; i < 4; i++) {
-                double[] p = pts.get(0, i);
-                int x = (int) round(p[0]);
-                int y = (int) round(p[1]);
+                int x = pts.get(i * 2);
+                int y = pts.get(i * 2 + 1);
                 poly.addPoint(x, y);
-                gr.drawString(String.valueOf(event.markerId()), x, y);
+                gr.drawString(String.valueOf(event.getMarkerId()), x, y);
             }
             gr.setColor(MARKER_FRAME_COLOR);
             gr.draw(poly);
         }
-        return Tuple2.of(new ImageIcon(img), event.markerId());
+        return Tuple2.of(new ImageIcon(img), event.getMarkerId());
     }
 
     private final Namespace args;
@@ -362,7 +361,7 @@ public class ArucoMarker {
      * Handles exceptions and communication failures thrown by the underlying MQTT network client.
      * <p>
      * Logs the fault context parameters and schedules an automated retry attempt
-     * after a specific interval using an background scheduler.
+     * after a specific interval using a background scheduler.
      * </p>
      *
      * @param error the exception detailing the network channel communication drop cause
