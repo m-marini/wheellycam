@@ -78,7 +78,7 @@ public class ArucoMarker {
     public static final BasicStroke MARKER_STROKE = new BasicStroke(3);
     public static final String DEFAULT_BROKER_URL = "tcp://localhost:1883";
     public static final long DEFAULT_RETRY_INTERVAL = 3000L;
-    public static final String DEFAULT_DEVICE_NAME = "wheellyma";
+    public static final String DEFAULT_DEVICE_NAME = "aruco";
     public static final String DEFAULT_DEVICE_VERSION = "v1";
     public static final String DEFAULT_CAMERA_NAME = "wheellycam";
     public static final String DEFAULT_CAMERA_VERSION = "v0";
