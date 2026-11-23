@@ -131,6 +131,17 @@ public class Device {
     }
 
     /**
+     * Publishes the data to the sensor topic
+     *
+     * @param dataType the data type used as suffix of the topic
+     * @param data     the data message
+     */
+    public Completable publishData(String dataType, byte[] data) {
+        return client.publish(format("sens/%s/%s/%s/%s", name, id, version, dataType),
+                new MqttMessage(data));
+    }
+
+    /**
      * Publishes the error response to the command error topic
      *
      * @param topic the command topic

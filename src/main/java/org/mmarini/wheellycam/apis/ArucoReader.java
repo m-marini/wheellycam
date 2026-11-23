@@ -28,6 +28,8 @@
 
 package org.mmarini.wheellycam.apis;
 
+import org.mmarini.Tuple2;
+import org.mmarini.wheelly.protobuf.aruco.MarkerEvent;
 import org.opencv.core.CvType;
 import org.opencv.core.Mat;
 import org.opencv.objdetect.ArucoDetector;
@@ -41,7 +43,9 @@ import java.awt.image.BufferedImage;
 import java.awt.image.DataBufferByte;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.IntStream;
 
+import static java.lang.Math.round;
 import static java.lang.Math.sqrt;
 
 /**
@@ -73,18 +77,26 @@ public abstract class ArucoReader {
         return heron(mat.get(0, 0), mat.get(0, 1), mat.get(0, 2))
                 + heron(mat.get(0, 0), mat.get(0, 2), mat.get(0, 3));
     }
-
     /**
-     * Processes a buffered frame to spot and analyse any present ArUco markers.
+     * Analyses a buffered image frame to detect ArUco fiducial markers and
+     * constructs a corresponding Protocol Buffers {@link MarkerEvent}.
      * <p>
-     * The framework parses raw pixel buffers into an optimised matrix format
-     * to perform precise detection of corners and identifiers.
+     * The raw image pixels are converted into an OpenCV 3-channel {@link Mat}
+     * and scanned using an {@link ArucoDetector}. If multiple markers are
+     * detected within the frame, only the marker occupying the largest pixel
+     * area is selected, and its four rounded corner coordinates are recorded
+     * in clockwise/sequential order. If no valid markers are found, an event
+     * with {@code markerId} set to {@code -1} and an empty coordinate list is
+     * returned.
      * </p>
      *
-     * @param img the raw image frame captured from the input device
-     * @return an initialised event containing the parsed marker data and snapshot info
+     * @param img the source {@link BufferedImage} frame (backed by a 3-byte
+     *            {@link DataBufferByte}) captured from the camera
+     * @return a {@link Tuple2} pairing the populated {@link MarkerEvent} message
+     *         (with capture timestamp, image dimensions, detected marker ID,
+     *         and flattened corner coordinates) with the original {@code img}
      */
-    static public CameraEvent captureMarker(BufferedImage img) {
+    static public Tuple2<MarkerEvent, BufferedImage> captureMarkerProto(BufferedImage img) {
         byte[] pixels = ((DataBufferByte) img.getRaster().getDataBuffer()).getData();
         Mat image = new Mat(img.getHeight(), img.getWidth(), CvType.CV_8UC(3));
         image.put(0, 0, pixels);
@@ -116,10 +128,37 @@ public abstract class ArucoReader {
             logger.atDebug().log("markerId: {}", markerId);
             logger.atDebug().log("edges: {}", edges);
             ids.release();
-            return CameraEvent.create(timestamp, markerId, img.getWidth(), img.getHeight(), edges.get(markerIdx), img);
+            Mat points = edges.get(markerIdx);
+            List<Integer> p = IntStream.of(
+                            (int) round(points.get(0, 0)[0]),
+                            (int) round(points.get(0, 0)[1]),
+                            (int) round(points.get(0, 1)[0]),
+                            (int) round(points.get(0, 1)[1]),
+                            (int) round(points.get(0, 2)[0]),
+                            (int) round(points.get(0, 2)[1]),
+                            (int) round(points.get(0, 3)[0]),
+                            (int) round(points.get(0, 3)[1]))
+                    .boxed()
+                    .toList();
+            ids.release();
+
+            return Tuple2.of(MarkerEvent.newBuilder()
+                            .setTimestamp(timestamp)
+                            .setMarkerId(markerId)
+                            .setWidth(img.getWidth())
+                            .setHeight(img.getHeight())
+                            .addAllCoords(p)
+                            .build(),
+                    img);
         }
-        ids.release();
-        return CameraEvent.create(timestamp, -1, img.getWidth(), img.getHeight(), null, img);
+
+        return Tuple2.of(MarkerEvent.newBuilder()
+                        .setTimestamp(timestamp)
+                        .setMarkerId(-1)
+                        .setWidth(img.getWidth())
+                        .setHeight(img.getHeight())
+                        .build(),
+                img);
     }
 
     /**
