@@ -28,19 +28,25 @@
 
 package org.mmarini.wheellycam.fsm;
 
+import com.google.protobuf.InvalidProtocolBufferException;
 import io.reactivex.rxjava3.core.Completable;
+import io.reactivex.rxjava3.core.CompletableSource;
 import io.reactivex.rxjava3.core.Flowable;
 import io.reactivex.rxjava3.disposables.Disposable;
 import io.reactivex.rxjava3.processors.BehaviorProcessor;
 import io.reactivex.rxjava3.processors.PublishProcessor;
 import io.reactivex.rxjava3.subjects.CompletableSubject;
+import org.eclipse.paho.client.mqttv3.MqttMessage;
+import org.mmarini.Tuple2;
 import org.mmarini.wheelly.mqtt.Device;
+import org.mmarini.wheelly.protobuf.aruco.MarkerEvent;
+import org.mmarini.wheelly.protobuf.webcam.CameraHiMessage;
 import org.mmarini.wheellycam.apis.ArucoReader;
-import org.mmarini.wheellycam.apis.CameraEvent;
 import org.mmarini.wheellycam.apis.CameraImageFetcher;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
@@ -75,7 +81,7 @@ public class WheellyCamCaptureFSM implements CaptureFSMContext, CaptureFSM {
     private final IdleState idleState;
     private final CaptureFSMState capturingState;
     private final ClosedState closedState;
-    private final PublishProcessor<CameraEvent> cameraEvents;
+    private final PublishProcessor<Tuple2<MarkerEvent, BufferedImage>> cameraEvents;
     private final BehaviorProcessor<CaptureFSMState> changeStateEvent;
     private final CompletableSubject closedEvent;
 
@@ -101,7 +107,7 @@ public class WheellyCamCaptureFSM implements CaptureFSMContext, CaptureFSM {
     public void captureImage() {
         CameraImageFetcher fetcher = state.get().fetcher();
         Disposable captureTask = fetcher.captureImage()
-                .map(ArucoReader::captureMarker)
+                .map(ArucoReader::captureMarkerProto)
                 .flatMapCompletable(this::sendEvent)
                 .subscribe(() -> {
                             logger.atInfo().log("Capture image complete.");
@@ -138,7 +144,7 @@ public class WheellyCamCaptureFSM implements CaptureFSMContext, CaptureFSM {
      */
     private Disposable createDeviceTask() {
         logger.atDebug().log("Creating device task.");
-        return config.cameraDevice().readData("hi", m -> new String(m.getPayload()))
+        return config.cameraDevice().readData("hi", this::parseHiMessage)
                 .timeout(config.watchDogTimeout(), TimeUnit.MILLISECONDS)
                 .subscribe(this::onDeviceMessageReceived,
                         this::onDeviceError);
@@ -185,6 +191,17 @@ public class WheellyCamCaptureFSM implements CaptureFSMContext, CaptureFSM {
         currentState().onDeviceMessageReceived(this, url);
     }
 
+    private String parseHiMessage(MqttMessage mqttMessage) {
+        byte[] payload = mqttMessage.getPayload();
+        try {
+            return CameraHiMessage.parseFrom(payload)
+                    .getUrl();
+        } catch (InvalidProtocolBufferException e) {
+            logger.atError().setCause(e).log("Error parsing protobuf message");
+            return null;
+        }
+    }
+
     /**
      * Forwards background processing worker exceptions down to the current state context handler.
      *
@@ -195,7 +212,7 @@ public class WheellyCamCaptureFSM implements CaptureFSMContext, CaptureFSM {
     }
 
     @Override
-    public Flowable<CameraEvent> readCameraEvents() {
+    public Flowable<Tuple2<MarkerEvent, BufferedImage>> readCameraEvents() {
         return cameraEvents.onBackpressureLatest();
     }
 
@@ -209,15 +226,10 @@ public class WheellyCamCaptureFSM implements CaptureFSMContext, CaptureFSM {
         return closedEvent;
     }
 
-    /**
-     * Dispatches analysed marker data to the local observers and serialises notification updates.
-     *
-     * @param event the camera event containing the processed image features
-     * @return a completable context tracking the network publication acknowledgement
-     */
-    private Completable sendEvent(CameraEvent event) {
-        cameraEvents.onNext(event);
-        return config.arucoDevice().publishData("am", event.line());
+    private CompletableSource sendEvent(Tuple2<MarkerEvent, BufferedImage> tuple) {
+        cameraEvents.onNext(tuple);
+        byte[] messageBfr = tuple.v1().toByteArray();
+        return config.arucoDevice().publishData("am", messageBfr);
     }
 
     @Override

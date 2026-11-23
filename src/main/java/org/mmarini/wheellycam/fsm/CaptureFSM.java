@@ -31,7 +31,10 @@ package org.mmarini.wheellycam.fsm;
 import io.reactivex.rxjava3.core.Completable;
 import io.reactivex.rxjava3.core.Flowable;
 import org.eclipse.paho.client.mqttv3.MqttException;
-import org.mmarini.wheellycam.apis.CameraEvent;
+import org.mmarini.Tuple2;
+import org.mmarini.wheelly.protobuf.aruco.MarkerEvent;
+
+import java.awt.image.BufferedImage;
 
 /**
  * Defines the finite state machine responsible for managing the camera capture workflow.
@@ -53,7 +56,7 @@ public interface CaptureFSM {
      *
      * @return a flowable stream emitting the parsed camera events
      */
-    Flowable<CameraEvent> readCameraEvents();
+    Flowable<Tuple2<MarkerEvent, BufferedImage>> readCameraEvents();
 
     /**
      * Provides a reactive stream tracking the internal lifecycle and state changes.

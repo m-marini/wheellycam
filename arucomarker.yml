@@ -5,12 +5,12 @@ mqttUser: wheellyj
 mqttPassword: wheellyj
 #deviceName: wheellyqr
 #deviceId: 0123456789abc
-deviceVersion: v1
+deviceVersion: v2
 #cameraName: wheellycam
-cameraId: +
-#cameraId: 38182bb1a31c
+#cameraId: +
+cameraId: 38182bb1a31c
 #cameraId: e05a1be2fe04
-#cameraVersion: v0
+cameraVersion: v1
 flashIntensity: 255
 frameSize: 8
 captureInterval: 1000
