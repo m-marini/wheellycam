@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [[1.0.0]](https://github.com/m-marini/wheellycam/releases/tag/1.0.0) 2026-11-25
+
 ### Changed
 
 - Issue [#37](https://github.com/m-marini/wheellycam/issues/37): Refactor protobuf migration
